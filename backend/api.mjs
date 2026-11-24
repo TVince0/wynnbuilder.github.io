@@ -36,14 +36,12 @@ function validate(request) {
   )
     throw Error("Invalid or oversized CUDA item pools.");
   const config = request.config;
+  if (config) config.cudaShortlist ??= 256;
   if (
     !config ||
     !Number.isInteger(config.level) ||
     config.level < 1 ||
     config.level > 121 ||
-    !Number.isFinite(config.seconds) ||
-    config.seconds < 1 ||
-    config.seconds > 300 ||
     !Number.isInteger(config.workers) ||
     config.workers < 1 ||
     config.workers > 8 ||
@@ -53,6 +51,9 @@ function validate(request) {
     !Number.isInteger(config.cudaBlocks) ||
     config.cudaBlocks < 16 ||
     config.cudaBlocks > 4096 ||
+    !Number.isInteger(config.cudaShortlist) ||
+    config.cudaShortlist < 32 ||
+    config.cudaShortlist > 4096 ||
     typeof config.objective !== "string" ||
     !config.finalContext ||
     !Array.isArray(config.rules) ||
@@ -170,7 +171,8 @@ export async function handleCuda(req, res) {
       workerData: request,
     });
     const send = (data) => {
-      if (!done) res.write(JSON.stringify(data) + "\n");
+      if (done || (data.progress && res.writableLength > 256 * 1024)) return;
+      res.write(JSON.stringify(data) + "\n");
     };
     worker.on("message", (message) => {
       if (message.pid) {
@@ -183,6 +185,7 @@ export async function handleCuda(req, res) {
         }
         return;
       }
+      if (message.progress?.phase === "searching") clearTimeout(timer);
       send(message);
       if (message.result || message.error) {
         cleanup();
@@ -201,17 +204,13 @@ export async function handleCuda(req, res) {
         res.end();
       }
     });
-    timer = setTimeout(
-      () => {
-        send({
-          error:
-            "CUDA search exceeded its initialization and search time allowance.",
-        });
-        cleanup();
-        res.end();
-      },
-      (request.config.seconds + 120) * 1000,
-    );
+    timer = setTimeout(() => {
+      send({
+        error: "CUDA initialization timed out.",
+      });
+      cleanup();
+      res.end();
+    }, 120000);
     timer.unref();
   } catch (error) {
     if (!res.headersSent)

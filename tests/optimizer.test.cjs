@@ -266,14 +266,15 @@ test('secondary rankings preserve primary ties through branch pruning and order 
 });
 
 
-test('time-limited search repairs mutually supporting pieces and validates ranked results', async () => {
+test('continuous search repairs mutually supporting pieces and validates ranked results', async () => {
   const c = context();
   const result = await c.eval(`(async () => {
     const pools = emptyEquipment().concat([weapon()]).map(item => [{key:item.statMap.get('name'),item}]);
     pools[0].push({key:'supportA',item:fixture('helmet','supportA',{strReq:120,dex:100,hp:500})});
     pools[1].push({key:'supportB',item:fixture('chestplate','supportB',{dexReq:120,str:100,hp:500})});
     const config = {level:106,characterClass:'Mage',objective:'health',direction:'max',limit:5,duplicateRings:true,seconds:.15,seed:17,rules:[{stat:'health',min:levelToHPBase(106)+1000}]};
-    const result = await OptimizerFast.search(pools,[],config);
+    const deadline = performance.now()+150;
+    const result = await OptimizerFast.search(pools,[],config,undefined,[],()=>performance.now()>=deadline);
     return {result, valid:result.builds.every(row=>row.assigned.every(n=>n<=100)&&row.assigned.reduce((a,b)=>a+b,0)<=200)};
   })()`);
   assert.equal(result.valid, true);
@@ -370,6 +371,22 @@ test('host compilation of the shared CUDA skill filter agrees with native net al
 test('NVRTC loader regressions cover Windows companion DLLs and alternate compiler variants', async () => {
   const {spawnSync} = require('node:child_process');
   const {python} = await import('../backend/process.mjs');
-  const result = spawnSync(python,['-m','unittest','discover','-s','tests','-p','test_cuda_loader.py'],{cwd:root,encoding:'utf8'});
+  const result = spawnSync(python,['-m','unittest','discover','-s','tests','-p','test_cuda_*.py'],{cwd:root,encoding:'utf8'});
   assert.equal(result.status,0,result.error?.message || result.stderr);
+});
+
+
+test('CUDA candidate totals account for ring symmetry and duplicate restrictions', () => {
+  const c = context();
+  vm.runInContext(fs.readFileSync(path.join(root,'backend/native_search.js'),'utf8'),c.ctx);
+  const totals=c.eval(`(() => {
+    const make=()=>emptyEquipment().concat([weapon()]).map(item=>[{key:item.statMap.get('name'),item}]);
+    const rings=['a','b','c'].map(key=>({key,item:fixture('ring',key)}));
+    const run=(symmetric,duplicates,second)=>{
+      const pools=make();pools[4]=rings;pools[5]=second;
+      return OptimizerCuda.pack({pools,tomes:[],config:{objective:'health',level:106,ringSymmetric:symmetric,duplicateRings:duplicates}}).total;
+    };
+    return [run(true,true,rings),run(true,false,rings),run(false,true,rings),run(false,false,rings),run(true,false,rings.slice(0,2))];
+  })()`);
+  assert.deepEqual(JSON.parse(JSON.stringify(totals)),['6','3','9','6','4']);
 });

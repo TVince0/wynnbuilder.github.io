@@ -43,7 +43,7 @@ const BuildOptimizer = (() => {
       cudaConfigured: true,
       cudaBlocks: document.getElementById("optimizer-cuda-blocks").value,
       strategy: document.getElementById("optimizer-strategy").value,
-      seconds: document.getElementById("optimizer-seconds").value,
+      cudaShortlist: document.getElementById("optimizer-cuda-shortlist").value,
       workers: document.getElementById("optimizer-workers").value,
       rules: readRules(),
       secondary: readSecondary(),
@@ -320,15 +320,13 @@ const BuildOptimizer = (() => {
         throw new Error("Choose a weapon in the equipment editor or select a class in Search settings.");
     }
     const strategy = document.getElementById("optimizer-strategy").value;
-    const seconds = Number(document.getElementById("optimizer-seconds").value);
     const workers = Number(document.getElementById("optimizer-workers").value);
-    if (!Number.isFinite(seconds) || seconds < 1 || seconds > 300)
-      throw new Error("Search time must be between 1 and 300 seconds.");
     if (!Number.isInteger(workers) || workers < 1 || workers > 8)
       throw new Error("Choose between 1 and 8 workers.");
     const cudaBlocks = Number(document.getElementById("optimizer-cuda-blocks").value);
     return {
-      strategy, seconds, workers, cudaBlocks,
+      strategy, workers, cudaBlocks,
+      cudaShortlist: Number(document.getElementById("optimizer-cuda-shortlist").value),
       rules,
       secondary: readSecondary(),
       finalContext: OptimizerFinal.snapshot(),
@@ -342,10 +340,32 @@ const BuildOptimizer = (() => {
       duplicateRings: document.getElementById("optimizer-duplicates").checked,
     };
   }
+  function showProgress(data) {
+    if (!data.total || data.message) return;
+    const container = document.getElementById("optimizer-progress");
+    const text = document.getElementById("optimizer-progress-text");
+    const bar = document.getElementById("optimizer-coverage");
+    const timings = document.getElementById("optimizer-timings");
+    container.hidden = false;
+    const total = BigInt(data.total).toLocaleString();
+    if (data.cuda) {
+      const ratio = Math.min(1, (data.estimatedUnique || 0) / Math.max(1, Number(data.total)));
+      const percent = ratio > 0 && ratio < .00000001 ? "<0.000001" : (ratio*100).toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+      bar.hidden = false; bar.value = ratio;
+      text.textContent = "Estimated GPU coverage " + count(data.estimatedUnique || 0) + " / " + total + " (" + percent + "%) · " + count(data.tested) + " proposals · " + count(data.evaluated) + " native evaluations";
+      timings.textContent = "GPU batch " + format(data.gpuMs || 0) + " ms · Native validation cycle " + format(data.nativeMs || 0) + " ms · " + count(Math.round(data.tested / Math.max(.001, data.elapsed))) + " GPU proposals/s · " + count(Math.round(data.evaluated / Math.max(.001, data.elapsed))) + " native evaluations/s";
+    } else {
+      bar.hidden = !!data.fast;
+      if (!data.fast) bar.value = Math.min(1, Number(data.examined) / Math.max(1, Number(data.total)));
+      text.textContent = data.fast ? count(data.examined) + " candidate attempts · " + total + " possible combinations · sampling can revisit builds" : count(data.examined) + " / " + total + " combinations considered";
+      timings.textContent = "Elapsed " + format(data.elapsed) + "s";
+    }
+  }
   function search() {
     cancel();
     resultBox.replaceChildren();
     results = [];
+    document.getElementById("optimizer-progress").hidden = true;
     try {
       ensureReady();
       const config = readConfig();
@@ -444,10 +464,11 @@ const BuildOptimizer = (() => {
       };
       worker.onmessage = ({ data }) => {
         if (data.progress) {
+          showProgress(data.progress);
           notice(data.progress.cuda
             ? data.progress.message || data.progress.device + " · " + count(data.progress.tested) + " GPU candidates · " + count(data.progress.evaluated) + " native evaluations · " + format(data.progress.elapsed) + "s · best found so far"
             : data.progress.fast
-              ? count(data.progress.examined) + " candidates tried · " + count(data.progress.evaluated) + " fully evaluated · " + format(data.progress.elapsed) + "s / " + config.seconds + "s · " + data.progress.workers + " workers · best found so far"
+              ? count(data.progress.examined) + " candidates tried · " + count(data.progress.evaluated) + " fully evaluated · " + format(data.progress.elapsed) + "s · " + data.progress.workers + " workers · best found so far"
               : count(data.progress.examined) + " / " + count(data.progress.total) + " combinations considered · " + format(data.progress.elapsed) + "s · exhaustive search");
           if (data.progress.builds) {
             results = data.progress.builds;
@@ -459,13 +480,14 @@ const BuildOptimizer = (() => {
           notice(data.error, true);
         }
         if (data.result) {
+          showProgress(data.result);
           cancel();
           results = data.result.builds;
           renderResults(config);
           notice(data.result.cuda
             ? results.length + " builds found · " + data.result.device + " · " + count(data.result.tested) + " GPU candidates · " + count(data.result.evaluated) + " native evaluations · " + format(data.result.elapsed) + "s · global optimum unproven"
             : data.result.fast
-            ? results.length + " builds found in " + format(data.result.elapsed) + "s · time budget reached · global optimum unproven"
+            ? results.length + " builds found in " + format(data.result.elapsed) + "s · search finished · global optimum unproven"
             : results.length + " ranked builds · " + count(data.result.examined) + " combinations considered · exhaustive search complete");
         }
       };
@@ -688,14 +710,15 @@ const BuildOptimizer = (() => {
               </div>
             </details>
             <div class="optimizer-controls optimizer-search-options">
-              <label>Search mode<select id="optimizer-strategy" class="optimizer-input"><option value="cuda">CUDA backend</option><option value="fast">CPU time-limited search</option><option value="exhaustive">CPU exhaustive search</option></select></label>
-              <label>Time budget (seconds)<input id="optimizer-seconds" class="optimizer-input" type="number" min="1" max="300" value="30"></label>
+              <label>Search mode<select id="optimizer-strategy" class="optimizer-input"><option value="cuda">CUDA backend</option><option value="fast">CPU optimization</option><option value="exhaustive">CPU exhaustive search</option></select></label>
               <label>CPU workers<select id="optimizer-workers" class="optimizer-input"></select></label>
               <label id="optimizer-cuda-batch-label">CUDA batch size<select id="optimizer-cuda-blocks" class="optimizer-input"><option value="16">4,096</option><option value="64">16,384</option><option value="256" selected>65,536</option><option value="1024">262,144</option><option value="4096">1,048,576</option></select></label>
             </div>
+            <label id="optimizer-cuda-shortlist-label">Native shortlist per cycle<select id="optimizer-cuda-shortlist" class="optimizer-input"><option>64</option><option>128</option><option selected>256</option><option>512</option><option>1024</option></select></label>
             <button type="button" class="optimizer-button" id="optimizer-cuda-check">Check CUDA backend</button>
             <p id="optimizer-cuda-status" class="optimizer-hint" role="status"></p>
-            <p class="optimizer-hint" id="optimizer-search-help">Time-limited search improves builds until the budget ends. Every result is validated. Global optimality is unproven.</p>
+            <p class="optimizer-hint" id="optimizer-cuda-hint">Larger CUDA batches screen more candidates per launch. Native shortlist size controls CPU work per validation cycle. GPU coverage estimates distinct skill-screened combinations. Native evaluations use the full final-stat calculator.</p>
+            <p class="optimizer-hint" id="optimizer-search-help">Search runs until you stop it. Every returned result is validated. Global optimality is unproven.</p>
           </section>
           <section class="optimizer-card">
             <div class="optimizer-heading"><h2>Stat targets</h2><button type="button" class="optimizer-button" id="optimizer-add-rule">+ Add target</button></div>
@@ -712,6 +735,7 @@ const BuildOptimizer = (() => {
             <details class="optimizer-notes"><summary>How generic spell damage is measured</summary><p>Generic spell hit is the average damage of a 100% spell hit using the weapon’s existing elements. It combines shared raw and percentage damage, elemental bonuses, skill points, critical chance and general buffs. Individual spell conversions and bonuses are excluded. It is a comparison benchmark. Each actual spell applies its own scaling.</p></details>
             <div class="optimizer-actions"><button type="button" class="optimizer-button optimizer-primary" id="optimizer-run">Find builds <span aria-hidden="true">→</span></button><button type="button" class="optimizer-button" id="optimizer-cancel" hidden>Cancel search</button></div>
             <p id="optimizer-message" role="status"></p>
+            <div id="optimizer-progress" hidden><progress id="optimizer-coverage" max="1" value="0" aria-label="Search coverage"></progress><p id="optimizer-progress-text"></p><p id="optimizer-timings" class="optimizer-hint"></p></div>
           </section>
           <section class="optimizer-result-section" aria-label="Ranked builds"><div id="optimizer-results"></div></section>
         </div>
@@ -726,9 +750,9 @@ const BuildOptimizer = (() => {
       <details class="optimizer-notes"><summary>What counts toward a build?</summary><p>Targets and ranking use WynnBuilder’s final stats with your selected abilities, aspects, buffs, powders and tomes. Search uses the minimum valid skill allocation. Attack speed runs from 0 (Super Slow) to 6 (Super Fast). Narrow the item pool or lock equipment to reduce search time.</p></details>
       <div class="optimizer-editor-heading"><h2>Equipment editor</h2><button type="button" class="optimizer-button" id="optimizer-back">Back to optimizer ↑</button></div>`;
     const strategyInput = document.getElementById("optimizer-strategy");
-    const secondsInput = document.getElementById("optimizer-seconds");
     const workersInput = document.getElementById("optimizer-workers");
     strategyInput.value = saved.cudaConfigured && ["cuda","fast","exhaustive"].includes(saved.strategy) ? saved.strategy : "cuda";
+    document.getElementById("optimizer-cuda-shortlist").value = ["64","128","256","512","1024"].includes(saved.cudaShortlist) ? saved.cudaShortlist : "256";
     const cudaBlocksInput = document.getElementById("optimizer-cuda-blocks");
     cudaBlocksInput.value = ["16","64","256","1024","4096"].includes(saved.cudaBlocks) ? saved.cudaBlocks : "256";
     document.getElementById("optimizer-cuda-check").onclick = async () => {
@@ -742,22 +766,22 @@ const BuildOptimizer = (() => {
         status.classList.toggle("optimizer-error", !state.available);
       } catch(error) {status.textContent = error.message;status.classList.add("optimizer-error");}
     };
-    secondsInput.value = saved.seconds || 30;
     for (let i = 1; i <= 8; i++) workersInput.append(element("option", {value: i}, String(i)));
     workersInput.value = String(Math.max(1, Math.min(8, Number(saved.workers) || Math.max(1, (navigator.hardwareConcurrency || 4) - 1))));
     const searchModeHelp = () => {
       const exhaustive = strategyInput.value === "exhaustive";
-      secondsInput.disabled = exhaustive;
       workersInput.disabled = exhaustive;
       const cuda = strategyInput.value === "cuda";
       document.getElementById("optimizer-cuda-batch-label").hidden = !cuda;
+      document.getElementById("optimizer-cuda-hint").hidden = !cuda;
+      document.getElementById("optimizer-cuda-shortlist-label").hidden = !cuda;
       document.getElementById("optimizer-cuda-check").hidden = !cuda;
       document.getElementById("optimizer-cuda-status").hidden = !cuda;
       document.getElementById("optimizer-search-help").textContent = cuda
-        ? "CUDA generates and skill-filters batches. Native CPU validators score the shortlist against your final-stat targets and rankings. Search is approximate and stops at the time budget. Requires the local NVIDIA backend."
+        ? "CUDA generates and skill-filters batches. Native CPU validators score the shortlist against your final-stat targets and rankings. Search is approximate and runs until you stop it. Requires the local NVIDIA backend."
         : exhaustive
         ? "Exhaustive search proves the best ranking when it finishes. Large item pools can take a very long time. Uses one worker."
-        : "Time-limited search improves builds until the budget ends. Every result is validated. Global optimality is unproven. Pools of 256 combinations or fewer are completed exhaustively.";
+        : "Search runs until you stop it. Every returned result is validated. Global optimality is unproven. Pools of 256 combinations or fewer are completed exhaustively.";
     };
     strategyInput.addEventListener("change", searchModeHelp);
     searchModeHelp();
@@ -851,6 +875,7 @@ const BuildOptimizer = (() => {
       }
     };
     panel.addEventListener("change", (event) => {
+      document.getElementById("optimizer-progress").hidden = true;
       if (event.target !== modeInput) {
         cancel();
         results = [];
@@ -896,6 +921,7 @@ const BuildOptimizer = (() => {
     }
     for (const type of ["input", "change", "click"]) document.addEventListener(type, event => {
       if (panel.contains(event.target) || rollDialog.contains(event.target)) return;
+      document.getElementById("optimizer-progress").hidden = true;
       cancel();
       results = [];
       resultBox.replaceChildren();

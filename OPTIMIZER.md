@@ -52,16 +52,18 @@ The search uses the minimum valid skill allocation and leaves spare points unass
 
 Use **Secondary ranking** to add ordered tie breakers. The primary metric has priority, then the first secondary, then subsequent rows. Each can prefer highest or lowest. Secondary scores are displayed on result cards, and settings are remembered locally.
 
-The default **CUDA backend** generates and skill-filters candidate batches on the GPU, then scores a shortlist with up to eight native CPU validators. It uses a fast item-stat proxy and random samples for shortlisting. Your selected final-stat targets, primary ranking and secondary rankings are applied by the native calculator. Its time budget starts after initialization. Every returned build is validated, and global optimality is unproven.
+The default **CUDA backend** generates and skill-filters candidate batches on the GPU, then scores a shortlist with up to eight native CPU validators. It uses a fast item-stat proxy and random samples for shortlisting. Your selected final-stat targets, primary ranking and secondary rankings are applied by the native calculator. It runs until stopped. Every returned build is validated, and global optimality is unproven.
 
-The explicit **CPU time-limited search** runs for 30 seconds using up to eight CPU workers. Set a budget from 1 to 300 seconds and choose the worker count. Workers search independently, exchange their strongest builds and make one-piece and multi-piece changes. Near-feasible candidates stay available so a later piece can repair missing skill points or target stats. Returned builds always pass the native final calculations, level/class restrictions, complete-loadout skill requirements and every target. Results use the configured primary and secondary rankings.
+The explicit **CPU optimization** mode runs until stopped using up to eight CPU workers. Workers search independently, exchange their strongest builds and make one-piece and multi-piece changes. Near-feasible candidates stay available so a later piece can repair missing skill points or target stats. Returned builds always pass the native final calculations, level/class restrictions, complete-loadout skill requirements and every target. Results use the configured primary and secondary rankings.
 
-Time-limited results are the best found within the budget. They have no global optimality guarantee. Stop the search or apply a result at any time to retain the best builds found so far. Fewer workers can help if memory use or responsiveness becomes an issue. Candidate pools with at most 256 combinations finish exhaustively even in time-limited mode.
+Optimization results are the best found so far. They have no global optimality guarantee. Stop the search or apply a result at any time to retain the best builds found so far. Fewer workers can help if memory use or responsiveness becomes an issue. Candidate pools with at most 256 combinations finish exhaustively even in CPU optimization mode.
 
 Choose **CPU exhaustive search** for a full ranking proof over a restricted pool. This mode uses one worker and runs until completion or cancellation. Skill feasibility prunes branches using future equipment support. Bounds for full combat effects remain conservative, so unrestricted exhaustive runs can still take a very long time.
 
-Both modes cache ability structure by class and active major IDs within a search. Only spells needed by the targets or rankings are evaluated. Generic spell ranking skips individual spell damage calculations. The CPU modes use browser Web Workers. CUDA mode uses the local backend and native Node worker threads.
+All modes cache ability structure by class and active major IDs within a search. Only spells needed by the targets or rankings are evaluated. Generic spell ranking skips individual spell damage calculations. The CPU modes use browser Web Workers. CUDA mode uses the local backend and native Node worker threads.
 
+
+The progress panel remains visible after stopping. CUDA displays estimated distinct GPU combinations checked out of the allowed total, alongside raw proposals and native evaluations. Sampling can revisit candidates, so the coverage estimate differs from the raw proposal counter. CUDA batches run continuously while a separate bounded shortlist is evaluated natively. Batch size and native shortlist size can be tuned independently. Full final calculations remain CPU work.
 
 ## Candidate JSON
 

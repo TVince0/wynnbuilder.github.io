@@ -398,7 +398,7 @@ fs.writeFileSync(protocol, [
   "emit({'ready':True,'device':'Protocol test device'})",
   "for line in sys.stdin:",
   " json.loads(line);time.sleep(.02)",
-  " emit({'tested':4096,'feasible':1,'candidates':[request['offsets']]})",
+  " emit({'tested':4096,'feasible':1,'candidates':[request['offsets']],'proxyScores':[1.0],'estimatedUnique':1,'gpuMs':.1})",
 ].join("\n"));
 const cudaServer = spawn(process.execPath,[path.join(project,"scripts/serve.mjs"),root],{
   env:{...process.env,PORT:"0",WYNN_CUDA_WORKER_SCRIPT:protocol},stdio:["ignore","pipe","inherit"],
@@ -421,14 +421,27 @@ try {
   assert.equal((await send()).status,409);
   controller.abort();
   await sleep(250);
-  const completed=await send();
+  const completedController=new AbortController();
+  const completed=await send(completedController.signal);
   assert.equal(completed.status,200);
-  const events=(await completed.text()).trim().split("\n").map(line=>JSON.parse(line));
-  assert.ok(!events.some(event=>event.error),JSON.stringify(events));
-  const result=events.find(event=>event.result)?.result;
-  assert.ok(result?.cuda);
-  assert.ok(result.builds.length);
-  assert.ok(Math.abs(result.builds[0].score-expectedCudaScore)<1e-7,"backend score must equal the native page");
+  const reader=completed.body.getReader(), decoder=new TextDecoder();
+  let buffer='', running;
+  while(!running || running.elapsed < 1.3 || !running.builds.length) {
+    const {value,done}=await reader.read();
+    assert.ok(!done,"CUDA search must continue past the legacy one-second limit");
+    buffer+=decoder.decode(value,{stream:true});
+    let newline;
+    while((newline=buffer.indexOf("\n"))>=0) {
+      const event=JSON.parse(buffer.slice(0,newline));buffer=buffer.slice(newline+1);
+      assert.ok(!event.error,event.error);
+      assert.ok(!event.result,"CUDA must run until stopped");
+      if(event.progress?.phase === "searching")running=event.progress;
+    }
+  }
+  assert.equal(running.estimatedUnique,1);
+  assert.ok(BigInt(running.total)>=1n);
+  assert.ok(Math.abs(running.builds[0].score-expectedCudaScore)<1e-7,"backend score must equal the native page");
+  completedController.abort();
   console.log("PASS CUDA service protocol, native validation parity, origin checks, busy handling and cancellation (test GPU process)");
 } finally {cudaServer.kill();fs.rmSync(cudaTemp,{recursive:true,force:true});}
 console.log(

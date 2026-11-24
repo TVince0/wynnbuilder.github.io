@@ -12,7 +12,7 @@ pnpm cuda:check
 pnpm dev
 ```
 
-Open `http://127.0.0.1:8000/builder/`. Select **CUDA backend** and set the time budget, CPU worker count and CUDA batch size. **Check CUDA backend** verifies driver access and kernel compilation from the page. Driver or compiler failures are displayed explicitly. CPU search modes can be selected manually.
+Open `http://127.0.0.1:8000/builder/`. Select **CUDA backend** and set the CPU worker count, CUDA batch size and native shortlist size. **Check CUDA backend** verifies driver access and kernel compilation from the page. Driver or compiler failures are displayed explicitly. CPU search modes can be selected manually.
 
 Setup installs NumPy and `nvidia-cuda-nvrtc-cu12` into `backend/.venv`. NVRTC compiles `search.cu` at runtime, so the normal setup uses the NVIDIA driver and packaged compiler. Compiled PTX is cached by source hash, compiler version and GPU compute capability in `backend/.cuda-cache`. NVIDIA's driver also manages its device-code cache.
 
@@ -28,17 +28,20 @@ For Python environments managed elsewhere, install `backend/requirements.txt` th
 4. CUDA computes net skill support for the entire loadout. It includes the selected guild tome, excludes a piece's own bonus from its requirement, excludes weapon/crafted bonuses as support, and checks the manual point budget and per-skill cap. Borderline floating-point cases receive a small permissive margin and are checked strictly by the native validator.
 5. Each block retains a winner under a cheap item-stat proxy and a randomly selected skill-feasible candidate. The proxy covers additive item IDs and a simplified generic damage model. Full abilities, set effects, spell-specific logic and final-stat thresholds are evaluated by the native validators.
 6. Up to eight Node worker threads evaluate the shortlist with the same native `Build`, final-stat, ability, aspect, buff, powder and damage functions used by the page. Only candidates passing every target and skill check enter the displayed results. Primary and secondary rankings use these native scores.
-7. Near-target candidates and validated elites seed subsequent GPU batches. GPU work overlaps native evaluation. At the deadline the backend returns the best validated builds found. Stopping the search disconnects the stream and terminates its GPU process and validators.
+7. Near-target candidates and validated elites seed subsequent GPU batches. A continuous GPU producer fills a bounded reservoir while native validators process a separate shortlist. CUDA batch size and native shortlist size are independent. The search runs until stopped. Stopping it disconnects the stream and terminates its GPU process and validators.
 
 This is an approximate GPU-assisted optimization search. Results have no global optimality guarantee. The GPU proxy can favor different candidates from the full final-stat score. Random block samples and native-scored feedback provide exploration alongside it. Exhaustive CPU mode remains available for restricted pools.
 
-## Tuning
+## Progress and tuning
 
-- Start with 65,536 candidates per GPU batch and a 30-second budget.
-- CPU workers control native final-stat validation concurrency. Increase this if shortlist evaluation is the bottleneck.
-- Larger GPU batches increase proposal volume and also increase the native shortlist. A block produces at most two candidates. The selectable batch sizes range from 4,096 to 1,048,576.
+- Searches run until stopped or a result is applied. The initialization watchdog applies only while the CUDA process and validators start.
+- The progress panel shows estimated distinct GPU combinations checked out of the total allowed candidate combinations, raw GPU proposals, native evaluations, elapsed time and throughput.
+- CUDA coverage uses a 16,384-register HyperLogLog sketch in fixed memory. Repeated proposals hash to the same registers. It is a statistical estimate and can reach approximately 100% without an exhaustive completion proof. The total accounts for ring symmetry and the duplicate-ring setting. Native evaluations can include revisits after the bounded deduplication cache rolls over.
+- CUDA batch size is the number of proposals generated per kernel launch. Native shortlist size limits how many candidates are sent to the CPU in one validation cycle, independently of batch size.
+- Start with 65,536 GPU proposals per batch and a native shortlist of 256. Compare 262,144 proposals on an RTX 4070 SUPER using the displayed proposal and native-evaluation rates. A larger batch amortizes launch/transfer overhead, increases per-launch work and delays feedback until the batch completes. Its best setting depends on the CPU and selected abilities as well as the GPU.
+- The GPU producer keeps screening while CPUs validate previous candidates. High CPU use is expected with many native workers because full WynnBuilder calculations still execute there. GPU batch timings cover launch and synchronization. Native timings cover a complete validation cycle across workers. These stages overlap.
+- The selectable CUDA batch sizes range from 4,096 to 1,048,576 proposals. Native shortlists range from 64 to 1,024 candidates. Smaller native shortlists reduce the work per cycle while keeping the GPU proposal count independent.
 - Locks, level/tier filters and imported pools reduce the equipment space without changing selected items' native calculations.
-- Initialization and the last in-flight validation batch add overhead beyond the search budget.
 
 ## Verification
 

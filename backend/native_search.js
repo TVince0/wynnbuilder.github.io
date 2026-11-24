@@ -22,8 +22,11 @@ const OptimizerCuda = (() => {
     }
     if (key === "maxManaTotal") return [6, "maxMana"];
     const aliases = {
-      manaRegen: "mr", manaPerHit: "ms", poisonDps: "poison",
-      poisonMeleeDps: "poison", poisonSpellDps: "poison",
+      manaRegen: "mr",
+      manaPerHit: "ms",
+      poisonDps: "poison",
+      poisonMeleeDps: "poison",
+      poisonSpellDps: "poison",
     };
     return [0, aliases[key] || key.replace(/DefFinal$/, "Def")];
   }
@@ -102,8 +105,30 @@ const OptimizerCuda = (() => {
         }
       }
     }
+    const ringKeys = pools[4].map((entry) => entry.key);
+    config.ringSymmetric =
+      !!config.ringSymmetric &&
+      ringKeys.length === pools[5].length &&
+      ringKeys.every((key, index) => key === pools[5][index].key);
+    const ringKeySet = new Set(ringKeys);
+    const intersection = pools[5].filter((entry) =>
+      ringKeySet.has(entry.key),
+    ).length;
+    const ringPairs = config.ringSymmetric
+      ? (BigInt(ringKeys.length) *
+          BigInt(ringKeys.length + (config.duplicateRings ? 1 : -1))) /
+        2n
+      : BigInt(pools[4].length) * BigInt(pools[5].length) -
+        BigInt(config.duplicateRings ? 0 : intersection);
+    const total = pools.reduce(
+      (value, pool, slot) =>
+        slot === 4 || slot === 5 ? value : value * BigInt(pool.length),
+      ringPairs,
+    );
     return {
       items,
+      total: String(total),
+      ringSymmetric: config.ringSymmetric,
       offsets,
       sizes,
       rings,

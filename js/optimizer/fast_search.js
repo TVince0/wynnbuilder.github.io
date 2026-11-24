@@ -1,13 +1,11 @@
-/* Time-bounded population search. Native calculations validate every returned build. */
+/* Continuous population search. Native calculations validate every returned build. */
 const OptimizerFast = (() => {
-  async function search(pools, tomes, config, progress, inbox = []) {
+  async function search(pools, tomes, config, progress, inbox = [], shouldStop = () => false) {
     const compare = OptimizerSearch.createComparator(config);
     const ranks = [config.objective, ...(config.secondary || []).map(rank => rank.stat)];
     const requested = new Set([...ranks, ...(config.rules || []).map(rule => rule.stat)]);
     const limit = config.limit || 10;
     const start = performance.now();
-    const duration = Math.max(100, Number(config.seconds || 30) * 1000);
-    const deadline = start + duration;
     const total = pools.reduce((product, pool) => product * BigInt(pool.length), 1n);
     const maps = pools.map(pool => new Map(pool.map((entry, index) => [entry.key, index])));
     const mutable = pools.map((pool, index) => pool.length > 1 ? index : -1).filter(index => index >= 0);
@@ -78,8 +76,8 @@ const OptimizerFast = (() => {
     }
     if (config.initial?.length === pools.length) importBuild(config.initial.map(key => ({key})));
     let nextReport = start;
-    while (performance.now() < deadline) {
-      const sliceEnd = Math.min(deadline, performance.now() + 25);
+    while (!shouldStop()) {
+      const sliceEnd = performance.now() + 25;
       while (inbox.length && performance.now() < sliceEnd) importBuild(inbox.shift().pieces);
       do {
         let indices;
