@@ -1501,6 +1501,7 @@ function show_tab(target, tabs) {
 let scrollPos = 0
 if (typeof document !== "undefined" && screen.width < 992) {
     document.addEventListener('scroll', (e) => {
+        if (!document.getElementById('mobile-navbar')?.classList.contains('fixed-top')) return;
         if (document.documentElement.scrollTop - scrollPos > 20) {
             document.getElementById("mobile-navbar").style.display = "none";
             document.getElementById("mobile-navbar-dropdown").style.display = "none";

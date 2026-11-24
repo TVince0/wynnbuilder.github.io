@@ -4,12 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="HandheldFriendly" content="true" />
     <meta name="MobileOptimized" content="320" />
-    <meta name="viewport" content="initial-scale=1.0, maximum-scale=1.0, width=device-width, user-scalable=no" />
-
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>WynnBuilder</title>
     <link rel="icon" href="../media/icons/new/builder.png" type="image/icon type">
-
-    <meta name="viewport" content="width=device-width, initial-scale=.45, user-scalable=no">
 
     <!-- nunito font, copying wynnbuilder, which is copying wynndata -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -22,29 +19,30 @@
     <link rel="stylesheet" href="../css/sq2bs.css">
     <link rel="stylesheet" href="../css/sidebar.css">
     <link rel="stylesheet" href="../css/wynnstyles.css">
-<link rel="stylesheet" href="../css/optimizer.css"></head>
-<body class="text-light" id = "body"><section id="build-optimizer" aria-label="Build optimizer"><p>Loading WynnBuilder item data…</p></section>
+    <link rel="stylesheet" href="../css/optimizer.css">
+</head>
+<body class="text-light" id = "body">
     <!-- main -->
-    <div id="main-sidebar" class="sidebar dark-7 dark-shadow">
+    <div id="main-sidebar" role="navigation" aria-label="WynnBuilder tools" class="sidebar dark-7 dark-shadow">
         <a href = ""><img src="../media/icons/new/builder.png" alt = "WynnBuilder" title = "WynnBuilder"><b>WynnBuilder</b></a>
         <a href = "../crafter/"><img src = "../media/icons/new/crafter.png" alt = "WynnCrafter" title = "WynnCrafter"><b>WynnCrafter</b></a>
         <a href = "../items/"><img src = "../media/icons/new/searcher.png" alt = "WynnAtlas" title = "WynnAtlas"><b>WynnAtlas</b></a>
         <a href = "../custom/"><img src = "../media/icons/new/custom.png" alt = "WynnCustom" title = "WynnCustom"><b>WynnCustom</b></a>
         <a href = "../map/"><img src = "../media/icons/new/compass.png" alt = "WynnGPS" title = "WynnGPS"><b>WynnGPS</b></a>
         <a href = "../wynnfo/"><img src = "../media/icons/new/book.png" alt = "Wynnfo" title = "Wynnfo"><b>Wynnfo</b></a>
-        <a onclick = "toggleIcons()"><img src = "../media/icons/new/reload.png" alt = "" title = "Swap items on page"><b>Swap Icon Style</b></a>
+        <a role="button" tabindex="0" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); this.click(); }" onclick="toggleIcons()"><img src = "../media/icons/new/reload.png" alt = "" title = "Swap items on page"><b>Swap Icon Style</b></a>
         <hr/>
         <a href = "https://nori.fish/wynn/build/" target = "_blank"><img src = "../media/icons/new/nori_build.png" alt = "Build Search" title = "Build Search by Nori-Wynn"><b>Build Search</b></a>
         <a href = "https://nori.fish/wynn/recipe/" target = "_blank"><img src = "../media/icons/new/nori_recipe.png" alt = "Recipe Search" title = "Recipe Search by Nori-Wynn"><b>Recipe Search</b></a>
         <a href = "https://discord.gg/CGavnAnerv" target = "_blank"><img src = "../media/icons/discord.png" alt = "WB Discord" title = "WB Discord"><b>WB Discord</b></a>
     </div>
-    <div id="mobile-navbar" class="navbar dark-5 dark-shadow fixed-top d-lg-none pb-0">
+    <div id="mobile-navbar" class="navbar dark-5 dark-shadow d-lg-none pb-0">
         <div class="container-fluid scaled-font justify-content-center" style="height: 5vh;">
             <div class="navbar-brand mx-auto scaled-font" style="height: 100%;">
                 <img src="../media/icons/new/builder.png" alt="" style="height: 100%;">
                 <span>WynnBuilder</span>
             </div>
-            <button class="btn dropdown-toggle dark-2 px-4 text-white scaled-font border-dark border-3" onclick="toggle_tab('mobile-navbar-dropdown');"></button>
+            <button type="button" aria-expanded="false" aria-label="WynnBuilder navigation" aria-controls="mobile-navbar-dropdown" class="btn dropdown-toggle dark-2 px-4 text-white scaled-font border-dark border-3" onclick="toggle_tab('mobile-navbar-dropdown'); this.setAttribute('aria-expanded', document.getElementById('mobile-navbar-dropdown').style.display !== 'none')">Menu</button>
         </div>
         <div class="container-fluid scaled-font dark-3 px-3 py-3" id="mobile-navbar-dropdown" style="display: none;">
             <a href="../builder/" class="w-100 mb-3 text-white" style="height: 5vh; text-decoration: none;">
@@ -71,7 +69,7 @@
                 <img src="../media/icons/new/book.png" alt="" style="height: 100%;">
                 <span>WynnFo</span>
             </a>
-            <a onclick = "toggleIcons()" class="w-100 mb-3 text-white" style="height: 5vh; text-decoration: none;">
+            <a role="button" tabindex="0" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); this.click(); }" onclick="toggleIcons()" class="w-100 mb-3 text-white" style="height: 5vh; text-decoration: none;">
                 <img src="../media/icons/new/reload.png" alt="" style="height: 100%;">
                 <span>Swap Icon Style</span>
             </a>
@@ -89,6 +87,7 @@
             </a>
         </div>
     </div>
+    <section id="build-optimizer" aria-label="Build optimizer"><p>Loading WynnBuilder item data…</p></section>
     <div class="container-fluid overall-box mt-lg-2" style="margin-top: 6vh;">
         <!-- REMOVE THIS DIV AT SOME POINT. -->
         <div class = "row scaled-font mx-auto" id = "discord-banner-dev">

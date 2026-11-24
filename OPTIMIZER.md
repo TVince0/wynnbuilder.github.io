@@ -21,12 +21,12 @@ To produce a static site, run `pnpm build`. It copies the site's routes, scripts
 ## Search a loadout
 
 1. Choose a character level in the native builder.
-2. Select any owned gear in the normal autocomplete inputs. Under the optimizer, lock the corresponding slots.
-3. Use **Actual rolls** to enter the identified values for a locked piece. Blank fields follow the roll scenario. Zero and negative values are valid.
+2. In **Equipment**, select **Choose** beside a slot to open its gear picker. Use **Back to optimizer**, then check the slots you want to lock.
+3. Use **Edit rolls** to enter the identified values for a locked piece. Blank fields follow the roll scenario. Zero and negative values are valid.
 4. Choose the search class, minimum candidate level and optional tier. Select optimistic, realistic or pessimistic rolls.
 5. Add minimum and maximum stat targets, select the ranking metric and choose the number of results.
 6. Select tomes in the native tome section. The search includes their stats and uses the selected guild tome for skill requirements. An empty guild tome slot contributes no bonus.
-7. Select **Find functioning builds**. **Use this build** applies its exact items, scenario and minimum allocation to the same native builder.
+7. Select **Find builds**. **Use this build** applies its exact items, scenario and minimum allocation to the same native builder.
 
 Optimistic uses each identification's native best endpoint. Pessimistic uses its worst endpoint. Realistic uses the rounded midpoint. These are deterministic assumptions about item quality. The optimizer uses the same native item expander and rounding as the builder. Two locked copies of a ring keep independent actual values.
 
@@ -54,7 +54,7 @@ The background Worker first finds feasible candidate builds, then performs an ex
 
 ## Candidate JSON
 
-The built-in native database is the default source. An imported file can select a smaller pool. It can be a JSON list of native item names or a WynnBuilder data file containing an `items` array. Official API exports with matching internal names are also accepted. Items missing from the loaded native version are reported before changing the pool.
+The built-in native database is the default source. Open **Item pool** in **Search settings** and choose **Import candidate JSON** to select a smaller pool. It can be a JSON list of native item names or a WynnBuilder data file containing an `items` array. Official API exports with matching internal names are also accepted. Items missing from the loaded native version are reported before changing the pool.
 
 ```json
 {
@@ -62,7 +62,7 @@ The built-in native database is the default source. An imported file can select 
 }
 ```
 
-Imports select native templates from the currently loaded version. Use **Actual rolls** for owned values and the native custom/crafting tools for new gear definitions. An imported pool needs an eligible item for every unlocked slot. Locked items stay eligible even when omitted from the imported list. **Use full database** clears the pool filter.
+Imports select native templates from the currently loaded version. Use **Edit rolls** for owned values and the native custom/crafting tools for new gear definitions. An imported pool needs an eligible item for every unlocked slot. Locked items stay eligible even when omitted from the imported list. **Use full database** clears the pool filter.
 
 ## Verification
 

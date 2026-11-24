@@ -41,6 +41,11 @@ async function openBuilder(window) {
   const page = await fetch(window.location.href);
   assert.equal(page.status, 200);
   window.document.write(await page.text());
+  const theme = window.document.querySelector('link[rel="stylesheet"][href$="/optimizer.css"]');
+  assert.ok(theme, "The served builder must load the optimizer stylesheet");
+  const css = await fetch(theme.href);
+  assert.equal(css.status, 200);
+  assert.match(css.headers.get("content-type"), /text\/css/);
   for (const script of window.document.querySelectorAll("script")) {
     let source = script.textContent;
     if (script.src) {
@@ -113,6 +118,9 @@ await wait(
   "optimizer did not mount",
 );
 assert.match(doc.getElementById("optimizer-count").textContent, /5,5/);
+assert.ok(doc.getElementById("optimizer-lock-helmet").disabled);
+doc.getElementById("optimizer-edit-helmet").click();
+assert.equal(doc.activeElement, doc.getElementById("helmet-choice"));
 const names = [
   "Third Eye",
   "Aquarius",
@@ -150,6 +158,8 @@ const mode = doc.getElementById("optimizer-mode");
 mode.value = "realistic";
 mode.dispatchEvent(new win.Event("change", { bubbles: true }));
 await sleep(100);
+assert.equal(doc.getElementById("optimizer-piece-helmet").textContent, "HelmetThird Eye");
+assert.ok(!doc.getElementById("optimizer-lock-helmet").disabled);
 for (const cb of doc.querySelectorAll(".optimizer-pin input"))
   cb.checked = true;
 doc.getElementById("optimizer-rules").replaceChildren();
