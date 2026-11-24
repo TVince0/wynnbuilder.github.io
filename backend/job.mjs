@@ -69,7 +69,12 @@ async function run() {
     },
   });
   gpu = gpuProcess([], (pid) => parentPort.postMessage({ pid }));
-  const readyGpu = gpu.send(payload);
+  const readyGpu = (async () => {
+    const initialized = await gpu.receive();
+    if (!initialized.initialized)
+      throw Error("Unexpected CUDA startup response. Restart pnpm dev after updating the backend.");
+    return gpu.send(payload);
+  })();
   const count = Math.max(1, Math.min(8, config.workers || 1));
   for (let i = 0; i < count; i++) validator(request);
   const [device] = await Promise.all([

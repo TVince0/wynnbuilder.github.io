@@ -186,6 +186,7 @@ export async function handleCuda(req, res) {
         return;
       }
       if (message.progress?.phase === "searching") clearTimeout(timer);
+      if (message.error) console.error(`[CUDA search] ${message.error}`);
       send(message);
       if (message.result || message.error) {
         cleanup();

@@ -55,3 +55,9 @@ pnpm cuda:check
 The first command checks NVRTC compilation without requiring GPU execution. The second loads the driver, selects the device, compiles and loads the module, then launches a deterministic kernel smoke test. Actual kernel launch and performance require NVIDIA hardware. During development here, PTX compilation and host/service tests were verified. A CUDA device was unavailable, so hardware execution and throughput remain unverified.
 
 The loader selects the primary NVRTC library from NVIDIA's wheel and preloads its bundled Windows `nvrtc-builtins64_*.dll`. Alternate `.alt` compiler variants are excluded from automatic discovery. If upgrading from a version that reported `nvrtc-builtins.alt64_129.dll`, pull the loader fix and rerun `pnpm cuda:check` with the dependencies already installed.
+
+## Worker startup failures
+
+If Find builds reports an error, the page and the `pnpm dev` terminal show the CUDA worker's diagnostic, including the initialization stage. The service waits for the worker to initialize its driver before sending the item catalog. Python protocol text uses UTF-8 on Windows regardless of the terminal code page.
+
+A bare `write EOF` or `EPIPE` comes from the Node-to-Python input pipe closing; it does not identify the underlying CUDA problem. The transport preserves Python's structured error or drained stderr instead of letting a pipe error hide it. Native crashes with no Python traceback report their process exit status (including the hexadecimal status on Windows). Run `pnpm cuda:check` to check the same driver, compiler and kernel independently of the browser. After pulling backend changes, restart `pnpm dev`.

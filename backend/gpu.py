@@ -7,6 +7,8 @@ import traceback
 import time
 from cuda_runtime import Cuda, compile_kernel
 
+phase = "starting Python worker"
+
 
 def emit(value):
     print(json.dumps(value, allow_nan=False), flush=True)
@@ -24,12 +26,15 @@ def estimate_unique(coverage):
 
 
 def run():
+    global phase
     if "--compile-only" in sys.argv:
         ptx = compile_kernel(Path(__file__).with_name("search.cu").read_bytes(), "75")
         emit({"compiled": True, "ptxBytes": len(ptx)})
         return
+    phase = "initializing CUDA driver"
     cuda = Cuda(int(__import__('os').environ.get('WYNN_CUDA_DEVICE', '0')))
     try:
+        phase = "loading NumPy"
         import numpy as np
         probe = "--probe" in sys.argv
         if probe:
@@ -38,7 +43,11 @@ def run():
                 "budget": 200, "objective": 2, "direction": 1, "duplicateRings": False, "blocks": 16}
             request["base"][26] = 500
         else:
+            # Do not let Node write a large catalog while CUDA is initializing.
+            emit({"initialized": True, "device": cuda.name})
+            phase = "reading candidate data"
             request = json.loads(sys.stdin.readline())
+        phase = "preparing GPU arrays"
         items = np.ascontiguousarray(request["items"], dtype=np.float64)
         offsets = np.asarray(request["offsets"], dtype=np.int32)
         sizes = np.asarray(request["sizes"], dtype=np.int32)
@@ -49,12 +58,14 @@ def run():
         blocks = int(request.get("blocks", 256))
         if not 16 <= blocks <= 4096:
             raise ValueError("CUDA blocks must be between 16 and 4096")
+        phase = "compiling and loading CUDA kernel"
         function = cuda.compile(Path(__file__).with_name("search.cu"))
         elites = np.zeros((80, 9), dtype=np.int32)
         output = np.empty((blocks * 2, 9), dtype=np.int32)
         valid = np.zeros(1, dtype=np.uint32)
         scores = np.empty(blocks * 2, dtype=np.float64)
         coverage = np.zeros(16384, dtype=np.uint32)
+        phase = "allocating GPU memory"
         pointers = [cuda.upload(value) for value in [items, offsets, sizes, base, elites, output, valid, rings, scores, coverage]]
         def batch(command):
             rows = command.get("elites", [])[:80]
@@ -80,6 +91,7 @@ def run():
             return {"candidates": output[mask].tolist(), "proxyScores": scores[mask].tolist(),
                 "tested": blocks * 256, "feasible": int(valid[0]), "estimatedUnique": estimate,
                 "gpuMs": gpu_ms}
+        phase = "running CUDA batches"
         if probe:
             sample = batch({"seed": 1729})
             if sample["feasible"] != 4096 or sample["candidates"] != [list(range(9))]*32 or sample["estimatedUnique"] != 1:
@@ -100,6 +112,6 @@ if __name__ == "__main__":
     try:
         run()
     except Exception as error:
-        emit({"error": str(error)})
+        emit({"error": f"CUDA worker failed while {phase}: {type(error).__name__}: {error}"})
         traceback.print_exc(file=sys.stderr)
         sys.exit(1)

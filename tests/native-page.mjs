@@ -390,10 +390,13 @@ for (const [suffix, fresh] of [["/atree.json", false], ["/compress.json", true]]
 const cudaTemp = fs.mkdtempSync(path.join(project, ".cuda-test-"));
 const protocol = path.join(cudaTemp, "protocol.py");
 fs.writeFileSync(protocol, [
-  "import sys,json,time",
+  "import sys,json,time,pathlib",
   "def emit(value): print(json.dumps(value),flush=True)",
   "if '--probe' in sys.argv:",
   " emit({'available':True,'device':'Protocol test device'});sys.exit(0)",
+  "if pathlib.Path(__file__).with_suffix('.fail').exists():",
+  " emit({'error':'CUDA worker failed while initializing CUDA driver: simulated search startup failure'});sys.exit(1)",
+  "emit({'initialized':True,'device':'Protocol test device'})",
   "request=json.loads(sys.stdin.readline())",
   "emit({'ready':True,'device':'Protocol test device'})",
   "for line in sys.stdin:",
@@ -442,6 +445,12 @@ try {
   assert.ok(BigInt(running.total)>=1n);
   assert.ok(Math.abs(running.builds[0].score-expectedCudaScore)<1e-7,"backend score must equal the native page");
   completedController.abort();
+  await sleep(250);
+  fs.writeFileSync(protocol.replace(/\.py$/, ".fail"), "");
+  const failedSearch = await send();
+  const failedEvents = (await failedSearch.text()).trim().split("\n").map(line => JSON.parse(line));
+  assert.equal(failedEvents.at(-1).error, "CUDA worker failed while initializing CUDA driver: simulated search startup failure");
+  assert.ok(!failedEvents.at(-1).error.includes("write EOF"));
   console.log("PASS CUDA service protocol, native validation parity, origin checks, busy handling and cancellation (test GPU process)");
 } finally {cudaServer.kill();fs.rmSync(cudaTemp,{recursive:true,force:true});}
 console.log(
