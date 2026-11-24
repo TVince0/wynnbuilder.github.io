@@ -3,23 +3,27 @@
  * Skill support from every unselected armour slot is included before pruning.
  */
 const OptimizerSearch = (() => {
-  function search(pools, tomes, config, progress) {
-    const limit = config.limit || 10;
-    const direction = config.direction === "min" ? -1 : 1;
+  function createComparator(config) {
     const rankings = [{stat: config.objective, direction: config.direction}, ...(config.secondary || [])];
-    const compare = (a, b) => {
+    return (a, b) => {
       for (const rank of rankings) {
         const difference = (rank.direction === "min" ? 1 : -1) * (a.stats[rank.stat] - b.stats[rank.stat]);
         if (difference) return difference;
       }
       return 0;
     };
+  }
+  function search(pools, tomes, config, progress) {
+    const limit = config.limit || 10;
+    const direction = config.direction === "min" ? -1 : 1;
+    const rankings = [{stat: config.objective, direction: config.direction}, ...(config.secondary || [])];
+    const compare = createComparator(config);
     const rules = config.rules || [];
     const metrics = new Set([
       ...rankings.map(rank => rank.stat),
       ...rules.map((rule) => rule.stat),
     ]);
-    const measure = build => config.finalContext ? OptimizerFinal.measurements(build, config.finalContext) : OptimizerModel.measurements(build);
+    const measure = build => config.finalContext ? OptimizerFinal.measurements(build, config.finalContext, metrics) : OptimizerModel.measurements(build);
     const tracked = new Set();
     for (const metric of metrics) {
       if (metric === "health") {
@@ -393,5 +397,5 @@ const OptimizerSearch = (() => {
       matched: String(matched),
     };
   }
-  return { search };
+  return { search, createComparator };
 })();

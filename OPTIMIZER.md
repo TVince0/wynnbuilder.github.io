@@ -54,7 +54,14 @@ The search uses the minimum valid skill allocation and leaves spare points unass
 
 Use **Secondary ranking** to add ordered tie breakers. The primary metric has priority, then the first secondary, then subsequent rows. Each can prefer highest or lowest. Secondary scores are displayed on result cards, and settings are remembered locally.
 
-Full final-stat evaluation runs in a background Worker. Skill feasibility still prunes branches using support from future equipment. Final combat stats use conservative bounds, so searches over the full database can take a long time. Lock equipment or import a smaller item pool to reduce combinations. A completed search retains the exact highest-ranked results for its configured model. Cancelling preserves the best results found so far.
+The default **Time-limited search** runs for 30 seconds using up to eight CPU workers. Set a budget from 1 to 300 seconds and choose the worker count. Workers search independently, exchange their strongest builds and make one-piece and multi-piece changes. Near-feasible candidates stay available so a later piece can repair missing skill points or target stats. Returned builds always pass the native final calculations, level/class restrictions, complete-loadout skill requirements and every target. Results use the configured primary and secondary rankings.
+
+Time-limited results are the best found within the budget. They have no global optimality guarantee. Stop the search or apply a result at any time to retain the best builds found so far. Fewer workers can help if memory use or responsiveness becomes an issue. Candidate pools with at most 256 combinations finish exhaustively even in time-limited mode.
+
+Choose **Exhaustive search** for a full ranking proof over a restricted pool. This mode uses one worker and runs until completion or cancellation. Skill feasibility prunes branches using future equipment support. Bounds for full combat effects remain conservative, so unrestricted exhaustive runs can still take a very long time.
+
+Both modes cache ability structure by class and active major IDs within a search. Only spells needed by the targets or rankings are evaluated. Generic spell ranking skips individual spell damage calculations. The browser handles CPU parallelism and requires no additional local service.
+
 
 ## Candidate JSON
 

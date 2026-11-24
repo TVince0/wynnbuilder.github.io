@@ -40,6 +40,9 @@ const BuildOptimizer = (() => {
   function persist() {
     const value = {
       mode,
+      strategy: document.getElementById("optimizer-strategy").value,
+      seconds: document.getElementById("optimizer-seconds").value,
+      workers: document.getElementById("optimizer-workers").value,
       rules: readRules(),
       secondary: readSecondary(),
       objective: document.getElementById("optimizer-objective").value,
@@ -314,7 +317,15 @@ const BuildOptimizer = (() => {
       )
         throw new Error("Choose a weapon in the equipment editor or select a class in Search settings.");
     }
+    const strategy = document.getElementById("optimizer-strategy").value;
+    const seconds = Number(document.getElementById("optimizer-seconds").value);
+    const workers = Number(document.getElementById("optimizer-workers").value);
+    if (!Number.isFinite(seconds) || seconds < 1 || seconds > 300)
+      throw new Error("Search time must be between 1 and 300 seconds.");
+    if (!Number.isInteger(workers) || workers < 1 || workers > 8)
+      throw new Error("Choose between 1 and 8 workers.");
     return {
+      strategy, seconds, workers,
       rules,
       secondary: readSecondary(),
       finalContext: OptimizerFinal.snapshot(),
@@ -402,8 +413,13 @@ const BuildOptimizer = (() => {
         throw new Error("The selected tomes require a higher character level.");
       config.ringSymmetric =
         !document.getElementById("optimizer-lock-ring1").checked &&
-        !document.getElementById("optimizer-lock-ring2").checked;
-      worker = new Worker(
+        !document.getElementById("optimizer-lock-ring2").checked &&
+        JSON.stringify(powderFor("ring1")) === JSON.stringify(powderFor("ring2"));
+      config.initial = slots.map((slot, index) => {
+        const name = equip_inputs[index].get_value()?.statMap.get("name");
+        return pools[index].find(entry => entry.key === name)?.key || pools[index][0].key;
+      });
+      worker = new OptimizerPool(
         new URL(
           "worker.js",
           document.querySelector('script[src$="/optimizer/ui.js"]').src,
@@ -425,14 +441,9 @@ const BuildOptimizer = (() => {
       };
       worker.onmessage = ({ data }) => {
         if (data.progress) {
-          notice(
-            count(data.progress.examined) +
-              " / " +
-              count(data.progress.total) +
-              " combinations considered · " +
-              format(data.progress.elapsed) +
-              "s · best results so far",
-          );
+          notice(data.progress.fast
+            ? count(data.progress.examined) + " candidates tried · " + count(data.progress.evaluated) + " fully evaluated · " + format(data.progress.elapsed) + "s / " + config.seconds + "s · " + data.progress.workers + " workers · best found so far"
+            : count(data.progress.examined) + " / " + count(data.progress.total) + " combinations considered · " + format(data.progress.elapsed) + "s · exhaustive search");
           if (data.progress.builds) {
             results = data.progress.builds;
             renderResults(config);
@@ -446,12 +457,9 @@ const BuildOptimizer = (() => {
           cancel();
           results = data.result.builds;
           renderResults(config);
-          notice(
-            results.length +
-              " ranked builds · " +
-              count(data.result.examined) +
-              " combinations considered.",
-          );
+          notice(data.result.fast
+            ? results.length + " builds found in " + format(data.result.elapsed) + "s · time budget reached · global optimum unproven"
+            : results.length + " ranked builds · " + count(data.result.examined) + " combinations considered · exhaustive search complete");
         }
       };
       worker.onerror = (event) => {
@@ -460,6 +468,7 @@ const BuildOptimizer = (() => {
       };
       worker.postMessage(request);
     } catch (error) {
+      cancel();
       notice(error.message || String(error), true);
     }
   }
@@ -472,7 +481,7 @@ const BuildOptimizer = (() => {
         element(
           "p",
           {},
-          "No functioning build met these targets. Review the filters, targets and locked pieces.",
+          "No functioning build meeting these targets was found. Try more time, different targets or a smaller item pool.",
         ),
       );
       return;
@@ -537,7 +546,7 @@ const BuildOptimizer = (() => {
     if (worker) {
       cancel();
       notice(
-        "Applied the best functioning build found so far. The exhaustive search was stopped.",
+        "Applied the best functioning build found so far. The search was stopped.",
       );
     }
     for (const [i, piece] of result.pieces.entries()) {
@@ -671,6 +680,12 @@ const BuildOptimizer = (() => {
                 <button type="button" class="optimizer-button" id="optimizer-all" disabled>Use full database</button>
               </div>
             </details>
+            <div class="optimizer-controls optimizer-search-options">
+              <label>Search mode<select id="optimizer-strategy" class="optimizer-input"><option value="fast">Time-limited search</option><option value="exhaustive">Exhaustive search</option></select></label>
+              <label>Time budget (seconds)<input id="optimizer-seconds" class="optimizer-input" type="number" min="1" max="300" value="30"></label>
+              <label>CPU workers<select id="optimizer-workers" class="optimizer-input"></select></label>
+            </div>
+            <p class="optimizer-hint" id="optimizer-search-help">Time-limited search improves builds until the budget ends. Every result is validated. Global optimality is unproven.</p>
           </section>
           <section class="optimizer-card">
             <div class="optimizer-heading"><h2>Stat targets</h2><button type="button" class="optimizer-button" id="optimizer-add-rule">+ Add target</button></div>
@@ -700,6 +715,23 @@ const BuildOptimizer = (() => {
       </div>
       <details class="optimizer-notes"><summary>What counts toward a build?</summary><p>Targets and ranking use WynnBuilder’s final stats with your selected abilities, aspects, buffs, powders and tomes. Search uses the minimum valid skill allocation. Attack speed runs from 0 (Super Slow) to 6 (Super Fast). Narrow the item pool or lock equipment to reduce search time.</p></details>
       <div class="optimizer-editor-heading"><h2>Equipment editor</h2><button type="button" class="optimizer-button" id="optimizer-back">Back to optimizer ↑</button></div>`;
+    const strategyInput = document.getElementById("optimizer-strategy");
+    const secondsInput = document.getElementById("optimizer-seconds");
+    const workersInput = document.getElementById("optimizer-workers");
+    strategyInput.value = saved.strategy === "exhaustive" ? "exhaustive" : "fast";
+    secondsInput.value = saved.seconds || 30;
+    for (let i = 1; i <= 8; i++) workersInput.append(element("option", {value: i}, String(i)));
+    workersInput.value = String(Math.max(1, Math.min(8, Number(saved.workers) || Math.max(1, (navigator.hardwareConcurrency || 4) - 1))));
+    const searchModeHelp = () => {
+      const exhaustive = strategyInput.value === "exhaustive";
+      secondsInput.disabled = exhaustive;
+      workersInput.disabled = exhaustive;
+      document.getElementById("optimizer-search-help").textContent = exhaustive
+        ? "Exhaustive search proves the best ranking when it finishes. Large item pools can take a very long time. Uses one worker."
+        : "Time-limited search improves builds until the budget ends. Every result is validated. Global optimality is unproven. Pools of 256 combinations or fewer are completed exhaustively.";
+    };
+    strategyInput.addEventListener("change", searchModeHelp);
+    searchModeHelp();
     rulesBox = document.getElementById("optimizer-rules");
     resultBox = document.getElementById("optimizer-results");
     message = document.getElementById("optimizer-message");
@@ -770,7 +802,7 @@ const BuildOptimizer = (() => {
     runButton.onclick = search;
     cancelButton.onclick = () => {
       cancel();
-      notice("Search cancelled.");
+      notice("Search stopped. Results found so far are preserved.");
     };
     document.getElementById("optimizer-all").onclick = () => {
       currentPool = null;

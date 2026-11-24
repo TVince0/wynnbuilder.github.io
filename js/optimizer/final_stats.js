@@ -6,7 +6,7 @@ const OptimizerFinal = (() => {
     const interactive = atree_make_interactives.get_value() || [new Map(), new Map()];
     return {
       trees: ATREES,
-      characterClass: wep_to_class.get(build_node.get_value().weapon.statMap.get('type')),
+      characterClass: wep_to_class.get(build_node.get_value()?.weapon.statMap.get('type')),
       order: (atree_node.get_value() || []).map(node => ({ability: node.ability})),
       active: new Map([...(atree_state_node.get_value() || [])].map(([id, value]) => [id, {active: value.active}])),
       aspects: aspect_agg_node.get_value() || [],
@@ -20,42 +20,53 @@ const OptimizerFinal = (() => {
       powders: powder_special_input.get_value(),
     };
   }
-  function evaluate(build, context) {
+  const compiledContexts = new WeakMap();
+  function evaluate(build, context, requested) {
     const stats = new Map(build.statMap);
     skp_order.forEach((key, i) => stats.set(key, build.total_skillpoints[i]));
     stats.set('classDef', classDefenseMultipliers.get(build.weapon.statMap.get('type')));
     const raid = call(raid_buff_node, {stats});
     const characterClass = wep_to_class.get(build.weapon.statMap.get('type'));
     const sameClass = characterClass === context.characterClass;
-    const order = sameClass ? context.order : get_sorted_class_atree(context.trees, characterClass);
-    const active = sameClass ? context.active : new Map(order.map(node => [node.ability.id, {active: false}]));
-    const merged = call(atree_merge, {
-      'atree-errors': [false, []], 'player-class': characterClass, build,
-      'atree-state': active, atree: order, 'final-aspects': sameClass ? context.aspects : [], 'raid-buffs': raid,
-    });
+    let cache = compiledContexts.get(context);
+    if (!cache) { cache = new Map(); compiledContexts.set(context, cache); }
+    const key = JSON.stringify([characterClass, [...raid.get('activeMajorIDs')].sort()]);
+    let compiled = cache.get(key);
+    if (!compiled) {
+      const order = sameClass ? context.order : get_sorted_class_atree(context.trees, characterClass);
+      const active = sameClass ? context.active : new Map(order.map(node => [node.ability.id, {active: false}]));
+      const merged = call(atree_merge, {
+        'atree-errors': [false, []], 'player-class': characterClass, build,
+        'atree-state': active, atree: order, 'final-aspects': sameClass ? context.aspects : [], 'raid-buffs': raid,
+      });
+      const raw = call(atree_raw_stats, {'atree-merged': merged});
+      const defaults = call(atree_make_interactives, {'atree-merged': merged, 'atree-order': order, headless: true});
+      const sliders = new Map(), buttons = new Map();
+      for (const [name, info] of defaults[0]) sliders.set(name, {slider: {value: context.sliders.get(name) ?? info.slider.value}});
+      for (const [name] of defaults[1]) buttons.set(name, {button: {classList: {contains: () => context.buttons.has(name)}}});
+      compiled = {merged, raw, sliders, buttons};
+      if (cache.size >= 256) cache.clear();
+      cache.set(key, compiled);
+    }
+    const {merged, raw, sliders, buttons} = compiled;
     const aggregate = (...maps) => call({compute_func: AggregateStatsNode.prototype.compute_func}, Object.fromEntries(maps.map((map, i) => [i, map])));
-    const raw = call(atree_raw_stats, {'atree-merged': merged});
     const pre = aggregate(raid, raw, call({compute_func: PowderSpecialCalcNode.prototype.compute_func}, {'powder-specials': powder_special_input.get_value() || []}));
     const oldBuild = player_build;
     player_build = build;
     let scaled;
     try { scaled = call(radiance_node, {stats: pre}); }
     finally { player_build = oldBuild; }
-    const sliders = new Map(), buttons = new Map();
-    // Generate native defaults for any controls introduced by a candidate major ID.
-    const defaults = call(atree_make_interactives, {'atree-merged': merged, 'atree-order': order, headless: true});
-    for (const [key, info] of defaults[0]) sliders.set(key, {slider: {value: context.sliders.get(key) ?? info.slider.value}});
-    for (const [key] of defaults[1]) buttons.set(key, {button: {classList: {contains: () => context.buttons.has(key)}}});
     const [tree, extra] = call(atree_scaling, {'atree-merged': merged, 'scale-stats': scaled, 'atree-interactive': [sliders, buttons]});
     const final = aggregate(scaled, extra, armor_powder_node.get_value() || new Map(), boosts_node.get_value() || new Map());
-    const spells = call(atree_collect_spells, {'atree-merged': tree});
+    const needsSpells = !requested || [...requested].some(key => key.startsWith('spell:') || key === 'meleeDps' || key === 'meleePerAttack');
+    const spells = needsSpells ? call(atree_collect_spells, {'atree-merged': tree}) : new Map();
     return {stats: final, spells};
   }
-  function measurements(build, context) {
-    const {stats, spells} = evaluate(build, context);
-    return values(build, stats, spells);
+  function measurements(build, context, requested) {
+    const {stats, spells} = evaluate(build, context, requested);
+    return values(build, stats, spells, requested);
   }
-  function values(build, stats, spells) {
+  function values(build, stats, spells, requested) {
     const result = OptimizerModel.measurements(build, stats);
     const defense = getDefenseStats(stats);
     result.ehpNoAgi = defense[1][1];
@@ -71,10 +82,13 @@ const OptimizerFinal = (() => {
     const crit = skillPointsToPercentage(stats.get('dex'));
     // A 100% spell hit with the weapon's existing element distribution.
     // Omitting a spell part excludes all native part-specific multipliers/conversions.
-    const generic = calculateSpellDamage(stats, build.weapon.statMap, [100, 0, 0, 0, 0, 0], true);
-    result.genericSpellHit = (1 - crit) * (generic[0][0] + generic[0][1]) / 2
-      + crit * (generic[1][0] + generic[1][1]) / 2;
+    if (!requested || requested.has('genericSpellHit')) {
+      const generic = calculateSpellDamage(stats, build.weapon.statMap, [100, 0, 0, 0, 0, 0], true);
+      result.genericSpellHit = (1 - crit) * (generic[0][0] + generic[0][1]) / 2
+        + crit * (generic[1][0] + generic[1][1]) / 2;
+    }
     for (const [id, spell] of spells) {
+      if (requested && ![...requested].some(key => key.startsWith('spell:' + id + ':') || (id === 0 && (key === 'meleeDps' || key === 'meleePerAttack')))) continue;
       if ('cost' in spell) {
         result['spell:' + id + ':cost'] = getSpellCost(stats, spell);
         result['spell:' + id + ':costRaw'] = getSpellCost(stats, spell, false);

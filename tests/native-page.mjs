@@ -65,6 +65,7 @@ class WorkerShim {
       console,
       performance,
       structuredClone,
+      setTimeout,
       navigator: { userAgent: "worker" },
       location,
       postMessage: (data) => this.onmessage?.({ data: structuredClone(data) }),
@@ -248,6 +249,23 @@ for (const [key, value] of Object.entries(parity.live)) {
   if (Number.isFinite(value)) assert.ok(Math.abs(parity.candidate[key] - value) < 1e-7, key + ' final parity');
 }
 assert.equal(doc.querySelector('.optimizer-dialog input[data-stat=hp]'), null);
+// Cached structures must not freeze candidate-dependent stats or requested metrics.
+const selectedChecks = vm.runInContext(`(() => {
+  const original = build_node.get_value();
+  const context = OptimizerFinal.snapshot();
+  const requested = new Set(['health', 'regen', 'genericSpellHit']);
+  return [0, 150, -50].map(delta => {
+    const helmet = OptimizerModel.fromMap(original.equipment[0].statMap);
+    helmet.statMap.set('hp', (helmet.statMap.get('hp') || 0) + delta);
+    const build = OptimizerModel.assemble(original.level, [helmet, ...original.equipment.slice(1)], original.tomes, original.weapon);
+    const full = OptimizerFinal.measurements(build, structuredClone(context));
+    const reduced = OptimizerFinal.measurements(build, context, requested);
+    return [...requested].map(key => [key, full[key], reduced[key]]);
+  });
+})()`, win);
+for (const checks of selectedChecks) for (const [key, expected, actual] of checks) {
+  assert.ok(Math.abs(expected - actual) < 1e-7, key + ' cached candidate parity');
+}
 const genericChecks = vm.runInContext(`(() => {
   const build = build_node.get_value();
   const stats = new Map(stat_agg_node.get_value());

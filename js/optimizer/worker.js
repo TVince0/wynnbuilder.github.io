@@ -17,12 +17,15 @@ importScripts(
   "model.js",
   "final_stats.js",
   "search.js",
+  "fast_search.js",
 );
 // Native Build's data dependency. The page sends its currently loaded version.
 let sets = new Map();
 let MAJOR_IDS = {}, player_build;
 COMPUTE_GRAPH_DEBUG = false;
-self.onmessage = ({ data }) => {
+const migrants = [];
+self.onmessage = async ({ data }) => {
+  if (data.type === "migrate") { migrants.push(...data.builds); return; }
   try {
     sets = new Map(data.sets);
     const context = data.config.finalContext;
@@ -41,11 +44,13 @@ self.onmessage = ({ data }) => {
       })),
     );
     const tomes = data.tomes.map(OptimizerModel.fromMap);
-    const result = OptimizerSearch.search(
+    const search = data.config.strategy === "fast" ? OptimizerFast.search : OptimizerSearch.search;
+    const result = await search(
       pools,
       tomes,
       data.config,
       (progress) => self.postMessage({ progress }),
+      migrants,
     );
     self.postMessage({ result });
   } catch (error) {

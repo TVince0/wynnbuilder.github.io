@@ -8,6 +8,7 @@ function context() {
   const ctx = vm.createContext({
     console: { log() {}, warn() {} },
     performance,
+    setTimeout,
     window: {
       location: { protocol: "http:", host: "localhost", pathname: "/builder/" },
     },
@@ -35,6 +36,7 @@ function context() {
     "defense_stats.js",
     "optimizer/model.js",
     "optimizer/search.js",
+    "optimizer/fast_search.js",
   ])
     run(file);
   vm.runInContext(
@@ -261,4 +263,50 @@ test('secondary rankings preserve primary ties through branch pruning and order 
     [run('max'),run('min')];
   `);
   assert.deepEqual(JSON.parse(JSON.stringify(result)), [['c','d'],['d','b']]);
+});
+
+
+test('time-limited search repairs mutually supporting pieces and validates ranked results', async () => {
+  const c = context();
+  const result = await c.eval(`(async () => {
+    const pools = emptyEquipment().concat([weapon()]).map(item => [{key:item.statMap.get('name'),item}]);
+    pools[0].push({key:'supportA',item:fixture('helmet','supportA',{strReq:120,dex:100,hp:500})});
+    pools[1].push({key:'supportB',item:fixture('chestplate','supportB',{dexReq:120,str:100,hp:500})});
+    const config = {level:106,characterClass:'Mage',objective:'health',direction:'max',limit:5,duplicateRings:true,seconds:.15,seed:17,rules:[{stat:'health',min:levelToHPBase(106)+1000}]};
+    const result = await OptimizerFast.search(pools,[],config);
+    return {result, valid:result.builds.every(row=>row.assigned.every(n=>n<=100)&&row.assigned.reduce((a,b)=>a+b,0)<=200)};
+  })()`);
+  assert.equal(result.valid, true);
+  assert.ok(result.result.builds.length);
+  assert.equal(result.result.builds[0].pieces[0].name, 'supportA');
+  assert.equal(result.result.builds[0].pieces[1].name, 'supportB');
+  assert.equal(result.result.complete, false);
+});
+
+test('parallel search merges tie breakers, waits for all workers, and ignores cancelled updates', () => {
+  const c = context();
+  c.ctx.members = [];
+  c.ctx.messages = [];
+  vm.runInContext(`class Worker {
+    constructor() {this.sent=[]; members.push(this);}
+    postMessage(data) {this.sent.push(data);}
+    terminate() {this.stopped=true;}
+  }`, c.ctx);
+  vm.runInContext(fs.readFileSync(path.join(root,'js/optimizer/parallel.js'),'utf8'), c.ctx);
+  const result = c.eval(`
+    const pool = new OptimizerPool('worker.js');
+    pool.onmessage=event=>messages.push(event.data);
+    const config={strategy:'fast',workers:3,seconds:1,limit:2,objective:'health',direction:'max',secondary:[{stat:'mr',direction:'max'}]};
+    pool.postMessage({config,pools:Array.from({length:9},()=>[1,2]),sets:[],tomes:[]});
+    const entry=(signature,mr)=>({signature,score:100,stats:{health:100,mr},pieces:[]});
+    members[0].onmessage({data:{result:{builds:[entry('a',1)],examined:'5'}}});
+    const early=messages.some(message=>message.result);
+    members[1].onmessage({data:{result:{builds:[entry('b',3),entry('a',1)],examined:'6'}}});
+    members[2].onmessage({data:{result:{builds:[entry('c',2)],examined:'7'}}});
+    const done=messages.at(-1).result;
+    const before=messages.length;
+    members[0].onmessage({data:{progress:{builds:[entry('late',99)],examined:'999'}}});
+    [early,done.builds.map(build=>build.signature),done.examined,members.every(member=>member.stopped),messages.length===before];
+  `);
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), [false,['b','c'],'18',true,true]);
 });
