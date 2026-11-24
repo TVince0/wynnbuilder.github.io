@@ -11,6 +11,7 @@ const OptimizerSearch = (() => {
       config.objective,
       ...rules.map((rule) => rule.stat),
     ]);
+    const measure = build => config.finalContext ? OptimizerFinal.measurements(build, config.finalContext) : OptimizerModel.measurements(build);
     const tracked = new Set();
     for (const metric of metrics) {
       if (metric === "health") {
@@ -81,6 +82,7 @@ const OptimizerSearch = (() => {
     const index = (key) => keys.indexOf(key);
     const val = (row, key) => (index(key) < 0 ? 0 : row[index(key)]);
     function bounds(metric, lo, hi) {
+      if (config.finalContext) return [-Infinity, Infinity];
       if (metric === "health") {
         const base = levelToHPBase(config.level);
         return [
@@ -194,7 +196,8 @@ const OptimizerSearch = (() => {
       );
     }
     function retain(build, stats) {
-      const score = stats[config.objective] ?? 0;
+      const score = stats[config.objective];
+        if (!Number.isFinite(score)) return;
       const identity = selected.map((choice) => choice.key);
       if (config.ringSymmetric && identity[4] > identity[5])
         [identity[4], identity[5]] = [identity[5], identity[4]];
@@ -251,16 +254,17 @@ const OptimizerSearch = (() => {
           selected[8].item,
         );
         if (!OptimizerModel.valid(build, config.characterClass)) continue;
-        const stats = OptimizerModel.measurements(build);
+        const stats = measure(build);
         if (
           rules.some(
             (rule) =>
-              (rule.min != null && stats[rule.stat] < rule.min) ||
+              !Number.isFinite(stats[rule.stat]) || (rule.min != null && stats[rule.stat] < rule.min) ||
               (rule.max != null && stats[rule.stat] > rule.max),
           )
         )
           continue;
-        const score = stats[config.objective] ?? 0;
+        const score = stats[config.objective];
+        if (!Number.isFinite(score)) continue;
         if (
           builds.length < limit ||
           direction * score > direction * builds.at(-1).score
@@ -314,7 +318,7 @@ const OptimizerSearch = (() => {
           selected[8].item,
         );
         if (OptimizerModel.valid(build, config.characterClass)) {
-          const stats = OptimizerModel.measurements(build);
+          const stats = measure(build);
           if (
             rules.every(
               (rule) =>
@@ -323,7 +327,8 @@ const OptimizerSearch = (() => {
             )
           ) {
             matched++;
-            const score = stats[config.objective] ?? 0;
+            const score = stats[config.objective];
+        if (!Number.isFinite(score)) return;
             if (
               builds.length < limit ||
               direction * score > direction * builds.at(-1).score

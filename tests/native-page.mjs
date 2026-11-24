@@ -64,6 +64,7 @@ class WorkerShim {
     const ctx = vm.createContext({
       console,
       performance,
+      structuredClone,
       navigator: { userAgent: "worker" },
       location,
       postMessage: (data) => this.onmessage?.({ data: structuredClone(data) }),
@@ -223,6 +224,40 @@ const measured = vm.runInContext(
 assert.equal(nativeDefense[0], measured.health);
 assert.equal(nativeDefense[2], measured.regen);
 assert.equal(displayStats.get("mr"), measured.mr);
+// Native final-node parity with active abilities and buffs, independent of the worker.
+vm.runInContext(`
+  for (const entry of atree_node.get_value()) {
+    const state = atree_state_node.get_value().get(entry.ability.id);
+    atree_set_state(state, true);
+    atree_state_node.mark_dirty().update();
+    if (atree_validate.get_value()[1].length) {
+      atree_set_state(state, false);
+      atree_state_node.mark_dirty().update();
+    }
+  }
+  document.getElementById('radiance-boost').classList.add('toggleOn');
+  radiance_node.mark_dirty().update();
+`, win);
+const parity = vm.runInContext(`(() => {
+  const build = build_node.get_value();
+  const candidate = OptimizerFinal.measurements(build, OptimizerFinal.snapshot());
+  const live = OptimizerFinal.values(build, stat_agg_node.get_value(), atree_collect_spells.get_value());
+  return {candidate, live};
+})()`, win);
+for (const [key, value] of Object.entries(parity.live)) {
+  if (Number.isFinite(value)) assert.ok(Math.abs(parity.candidate[key] - value) < 1e-7, key + ' final parity');
+}
+assert.equal(doc.querySelector('.optimizer-dialog input[data-stat=hp]'), null);
+const spellKey = Object.keys(parity.live).find(key => key.startsWith('spell:') && !key.includes(':0:') && !key.includes('cost'));
+assert.ok(spellKey, 'selected abilities expose spell metrics');
+const spellOption = doc.createElement('option');
+spellOption.value = spellKey;
+doc.getElementById('optimizer-objective').append(spellOption);
+doc.getElementById('optimizer-objective').value = spellKey;
+doc.getElementById('optimizer-run').click();
+await wait(() => doc.querySelector('.optimizer-result'), 'final spell search');
+assert.ok(doc.querySelector('.optimizer-result-title').textContent.includes(Number(parity.live[spellKey]).toLocaleString(undefined, {maximumFractionDigits: 2})), 'worker final spell score equals the native graph');
+vm.runInContext(`document.getElementById('radiance-boost').classList.remove('toggleOn'); radiance_node.mark_dirty().update();`, win);
 const beforeGuild = measured.assigned;
 const guildName = vm.runInContext(
   "[...tomeMap.values()].find(t=>t.type==='guildTome'&&t.str>0).displayName",
@@ -243,7 +278,7 @@ assert.ok(
   withGuild.assigned < beforeGuild,
   "guild skill bonuses lower the manual allocation",
 );
-assert.ok(doc.getElementById("optimizer-tome").textContent.includes(guildName));
+assert.equal(doc.getElementById("optimizer-tome"), null);
 doc.querySelector(".optimizer-result .optimizer-primary").click();
 await sleep(75);
 assert.equal(

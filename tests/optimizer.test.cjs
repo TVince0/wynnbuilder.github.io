@@ -151,6 +151,8 @@ test("native roll scenarios retain fixed IDs, reversed spell costs, signed regen
             return [item.statMap.get('str'),item.statMap.get('maxRolls').get('hprRaw'),item.statMap.get('maxRolls').get('spRaw1')];
         });
         modes.push([OptimizerModel.prepare(record,'optimistic',{hprRaw:0}).statMap.get('maxRolls').get('hprRaw')]);
+        const owned = OptimizerModel.prepare(record,'optimistic',{str:999,hp:99999});
+        if (owned.statMap.get('str') !== 5 || owned.statMap.get('hp') === 99999) throw Error('Fixed stats were overridden');
         modes
     `);
   assert.deepEqual(JSON.parse(JSON.stringify(res)), [

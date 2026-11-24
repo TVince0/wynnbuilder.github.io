@@ -136,7 +136,7 @@
   font: 500 26px/1.2 Georgia, serif;
   letter-spacing: -.025em;
 }
-.optimizer-heading, .optimizer-tome-row, .optimizer-editor-heading, .optimizer-result-title {
+.optimizer-heading, .optimizer-editor-heading, .optimizer-result-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -248,10 +248,10 @@ select.optimizer-input { cursor: pointer; text-overflow: ellipsis; }
   color: #d6dcb4;
 }
 .optimizer-pin .optimizer-button:hover { background: #303e31; }
-.optimizer-pin small, .optimizer-tome-row small { display: block; color: var(--muted); font-size: 12px; }
+.optimizer-pin small { display: block; color: var(--muted); font-size: 12px; }
 .optimizer-pin input, .optimizer-check input { width: 16px; height: 16px; flex: none; accent-color: #acd2a8; }
 .optimizer-check { border-top: 1px solid var(--line); padding: 10px 0; font-size: 13px; }
-.optimizer-tome-row { background: #202f28; border-radius: 7px; padding: 8px 10px; font-size: 14px; }
+
 #optimizer-message { margin: 12px 0 0; color: #c5dfbc; font-size: 14px; overflow-wrap: anywhere; }
 #optimizer-message:empty, .optimizer-result-section:has(#optimizer-results:empty) { display: none; }
 #optimizer-message.optimizer-error { color: #ffbdb1; }

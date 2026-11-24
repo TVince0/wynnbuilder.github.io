@@ -605,8 +605,11 @@ const atree_make_interactives = new (class extends ComputeNode {
 
         const boost_slider_parent = document.getElementById("boost-sliders");
         const boost_toggle_parent = document.getElementById("boost-toggles");
-        boost_slider_parent.innerHTML = "";
-        boost_toggle_parent.innerHTML = "";
+        const headless = input_map.get('headless');
+        if (!headless) {
+            boost_slider_parent.innerHTML = "";
+            boost_toggle_parent.innerHTML = "";
+        }
 
         /**
          * slider_info 
@@ -699,6 +702,10 @@ const atree_make_interactives = new (class extends ComputeNode {
             if (info.max_mult != null && info.max_mult !== 1) {
                 info.max = Math.round(info.max * info.max_mult);
             }
+        }
+        if (headless) {
+            for (const info of slider_map.values()) info.slider = {value: info.default_val ?? 0};
+            return [slider_map, button_map];
         }
         // next, render the sliders and toggles onto the abilities.
         for (const [slider_name, slider_info] of slider_map.entries()) {

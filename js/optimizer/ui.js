@@ -96,15 +96,9 @@ const BuildOptimizer = (() => {
     }));
   }
   function metrics() {
-    return [
-      ...OptimizerModel.baseMetrics,
-      ...rolledIDs.map((key) => [key, OptimizerModel.label(key)]),
-      ...skp_order.map((key) => [
-        "final" + key,
-        "Final " + skill[skp_order.indexOf(key)],
-      ]),
-    ];
+    return OptimizerFinal.metrics();
   }
+
   function statSelect(value) {
     const select = element("select", { class: "optimizer-input" });
     for (const [key, label] of metrics())
@@ -185,14 +179,9 @@ const BuildOptimizer = (() => {
     );
     const form = element("form", { method: "dialog" });
     const fields = element("div", { class: "optimizer-roll-fields" });
-    const keys = [
-      ...rolledIDs.filter(
-        (key) => map.get("minRolls").get(key) || map.get("maxRolls").get(key),
-      ),
-      ...["hp", "eDef", "tDef", "wDef", "fDef", "aDef", ...skp_order].filter(
-        (key) => map.get(key),
-      ),
-    ];
+    const keys = map.get("fixID") ? [] : rolledIDs.filter(key =>
+      map.get("minRolls").get(key) !== map.get("maxRolls").get(key));
+    if (!keys.length) fields.append(element("p", {}, "This item has no variable identifications."));
     for (const key of keys) {
       const row = element("label", { class: "optimizer-roll-row" });
       const lo = map.get("minRolls").get(key) ?? map.get(key),
@@ -308,6 +297,7 @@ const BuildOptimizer = (() => {
     }
     return {
       rules,
+      finalContext: OptimizerFinal.snapshot(),
       level,
       minLevel,
       weaponType: type,
@@ -516,6 +506,9 @@ const BuildOptimizer = (() => {
         skill.map((name, i) => name + " " + result.assigned[i]).join(" · "),
       );
       card.append(allocation);
+      const targets = element("p", {class: "optimizer-allocation"});
+      targets.textContent = config.rules.map(rule => OptimizerModel.label(rule.stat) + " " + format(result.stats[rule.stat])).join(" · ");
+      card.append(targets);
       resultBox.append(card);
     }
   }
@@ -678,10 +671,10 @@ const BuildOptimizer = (() => {
           <p class="optimizer-hint">Lock equipped pieces to keep them in every result.</p>
           <div class="optimizer-locks" id="optimizer-locks"></div>
           <label class="optimizer-check"><input type="checkbox" id="optimizer-duplicates" checked>Allow duplicate rings</label>
-          <div class="optimizer-tome-row"><div><small>Guild tome</small><span id="optimizer-tome"></span></div><button type="button" class="optimizer-button" id="optimizer-edit-tome">Change</button></div>
+
         </section>
       </div>
-      <details class="optimizer-notes"><summary>What counts toward a build?</summary><p>Search includes equipment rolls, active sets, equipped powders, selected tomes and the minimum valid skill allocation. Apply a result to see ability tree, aspect, raid buff and powder special effects in the equipment editor.</p></details>
+      <details class="optimizer-notes"><summary>What counts toward a build?</summary><p>Targets and ranking use WynnBuilder’s final stats with your selected abilities, aspects, buffs, powders and tomes. Search uses the minimum valid skill allocation. Attack speed runs from 0 (Super Slow) to 6 (Super Fast). Narrow the item pool or lock equipment to reduce search time.</p></details>
       <div class="optimizer-editor-heading"><h2>Equipment editor</h2><button type="button" class="optimizer-button" id="optimizer-back">Back to optimizer ↑</button></div>`;
     rulesBox = document.getElementById("optimizer-rules");
     resultBox = document.getElementById("optimizer-results");
@@ -696,7 +689,7 @@ const BuildOptimizer = (() => {
         .getElementById("optimizer-rarity")
         .append(element("option", { value: tier }, tier));
     document.getElementById("optimizer-edit-gear").onclick = () => goToField("helmet");
-    document.getElementById("optimizer-edit-tome").onclick = () => goToField("guildTome1");
+
     const editorHeading = panel.querySelector(".optimizer-editor-heading");
     panel.after(editorHeading);
     document.getElementById("optimizer-back").onclick = () => {
@@ -797,18 +790,25 @@ const BuildOptimizer = (() => {
           results = [];
           resultBox.replaceChildren();
         });
-    function tomeLabel() {
-      const tome = item_final_nodes[15]?.get_value(); // 9 gear + 6 weapon/armour tomes.
-      document.getElementById("optimizer-tome").textContent =
-        tome?.statMap.get("displayName") || "No Guild Tome";
+    function updateMetrics() {
+      for (const select of panel.querySelectorAll("#optimizer-objective, #optimizer-rules select")) {
+        const old = select.value;
+        const next = statSelect(old);
+        if (![...next.options].some(option => option.value === old)) {
+          next.append(element("option", {value: old}, OptimizerModel.label(old) + " (inactive)"));
+          next.value = old;
+        }
+        select.replaceChildren(...next.children);
+        select.value = old;
+      }
     }
-    field("guildTome1")?.addEventListener("change", () =>
-      setTimeout(tomeLabel, 20),
-    );
-    field("guildTome1")?.addEventListener("input", () =>
-      setTimeout(tomeLabel, 20),
-    );
-    tomeLabel();
+    for (const type of ["input", "change", "click"]) document.addEventListener(type, event => {
+      if (panel.contains(event.target) || rollDialog.contains(event.target)) return;
+      cancel();
+      results = [];
+      resultBox.replaceChildren();
+      setTimeout(updateMetrics, 600);
+    });
     if (mode !== "optimistic" || overrides.size) refreshBuild();
   }
   // A link's scenario and owned values take precedence over local preferences.

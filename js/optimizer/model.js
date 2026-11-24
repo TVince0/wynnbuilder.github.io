@@ -31,6 +31,7 @@ const OptimizerModel = (() => {
   }
   function roll(item, mode, actual = {}) {
     const stat = item.statMap;
+    const editable = new Set(rolledIDs.filter(key => !stat.get("fixID") && stat.get("minRolls").get(key) !== stat.get("maxRolls").get(key)));
     for (const key of rolledIDs) {
       const lo = stat.get("minRolls").get(key) || 0;
       const hi = stat.get("maxRolls").get(key) || 0;
@@ -44,18 +45,11 @@ const OptimizerModel = (() => {
       stat.get("minRolls").set(key, value);
     }
     for (const [key, value] of Object.entries(actual)) {
+      if (!editable.has(key)) continue;
       if (!Number.isFinite(value))
         throw new Error("Invalid actual value for " + key);
-      if (rolledIDs.includes(key)) {
-        stat.get("maxRolls").set(key, value);
-        stat.get("minRolls").set(key, value);
-      } else if (
-        ["hp", "eDef", "tDef", "wDef", "fDef", "aDef", ...skp_order].includes(
-          key,
-        )
-      ) {
-        stat.set(key, value);
-      } else throw new Error("Unsupported actual value " + key);
+      stat.get("maxRolls").set(key, value);
+      stat.get("minRolls").set(key, value);
     }
     stat.set(
       "skillpoints",
@@ -117,9 +111,9 @@ const OptimizerModel = (() => {
               weaponClass?.toLowerCase())),
     );
   }
-  function measurements(build) {
-    const stats = new Map(build.statMap);
-    for (let i = 0; i < 5; i++)
+  function measurements(build, finalStats) {
+    const stats = new Map(finalStats || build.statMap);
+    if (!finalStats) for (let i = 0; i < 5; i++)
       stats.set(skp_order[i], build.total_skillpoints[i]);
     stats.set(
       "classDef",
@@ -145,6 +139,7 @@ const OptimizerModel = (() => {
   }
   return {
     slots,
+    labels,
     baseMetrics,
     label,
     roll,

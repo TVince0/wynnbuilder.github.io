@@ -46,11 +46,11 @@ The search accounts for possible support from every future armour/accessory slot
 
 ## Search metrics and full builder calculations
 
-Candidate measurements use native `Item`, `Build`, powder application, set aggregation, skill allocation and `getDefenseStats`. Supported metrics include raw IDs, health, health regen, effective HP, effective regen, maximum mana and final skills. The search uses the minimum valid allocation and leaves spare points unassigned.
+Filtering and ranking use the native final calculation pipeline, including selected abilities, aspects, raid buffs, Radiance, powder specials, equipped powders and tomes. Available metrics cover the final defense summary, mana totals and mana per hit, utility stats, melee DPS and damage per attack, poison DPS, and spell outputs and mana costs from the selected ability tree. Attack speed uses 0 for Super Slow through 6 for Super Fast. Select the weapon class and ability tree before adding spell targets.
 
-The search score includes equipped tome stats, guild points, item rolls, numeric set bonuses and the powders currently entered for each slot. Ability trees, aspects, raid buffs and activated powder specials are evaluated by the normal builder after applying a result. These effects can change its final combat display. You can use all those native controls on the result.
+The search uses the minimum valid skill allocation and leaves spare points unassigned. Candidate equipment can activate its own major IDs. The selected tree, aspects and interactive settings apply to candidates of the current weapon class. Choosing a different class starts with its default attacks until you configure that class in the editor. Fixed item stats are read from the catalog and cannot be overridden by the roll editor or older share links.
 
-The background Worker first finds feasible candidate builds, then performs an exhaustive search with safe score, target and skill bounds. Results shown during a run are the best found so far. A finished search has the exact retained top scores for its selected search model. Large pools and nonlinear metrics can take a long time. Pins, candidate JSON and the level/tier filters reduce work. Cancelling preserves the results already found. Applying an interim result stops the current search.
+Full final-stat evaluation runs in a background Worker. Skill feasibility still prunes branches using support from future equipment. Final combat stats use conservative bounds, so searches over the full database can take a long time. Lock equipment or import a smaller item pool to reduce combinations. A completed search retains the exact highest-ranked results for its configured model. Cancelling preserves the best results found so far.
 
 ## Candidate JSON
 
