@@ -8,30 +8,74 @@ from pathlib import Path
 import sys
 
 _dll_handles = []
+_nvrtc = None
+
+
+def primary_nvrtc_files(directory):
+    """Ignore headers, builtins and alternate compilers in NVIDIA's wheels."""
+    files = []
+    for path in Path(directory).glob("**/*nvrtc*.*"):
+        name = path.name.lower()
+        if not path.is_file() or ".alt" in name:
+            continue
+        if sys.platform == "win32":
+            primary = name.startswith("nvrtc64_") and name.endswith(".dll")
+        else:
+            primary = name.startswith("libnvrtc.so")
+        if primary:
+            files.append(str(path.resolve()))
+    return sorted(files)
+
 
 def load_nvrtc():
-    candidates = [os.environ.get("WYNN_CUDA_NVRTC"), ctypes.util.find_library("nvrtc")]
-    try:
-        spec = importlib.util.find_spec("nvidia.cuda_nvrtc")
-    except ModuleNotFoundError:
-        spec = None
-    if spec and spec.submodule_search_locations:
-        for root in spec.submodule_search_locations:
-            candidates += [str(p) for p in Path(root).glob("**/*nvrtc*.*") if "builtins" not in p.name]
-    cuda_path = os.environ.get("CUDA_PATH")
-    if cuda_path:
-        candidates += [str(p) for p in Path(cuda_path).glob("bin/nvrtc64*.dll") if "builtins" not in p.name]
-        candidates += [str(p) for p in Path(cuda_path).glob("lib64/libnvrtc.so*")]
-    for filename in candidates:
-        if filename:
-            try:
-                # NVRTC locates its companion builtins library alongside itself.
-                if sys.platform == "win32" and os.path.isabs(filename):
-                    _dll_handles.append(os.add_dll_directory(str(Path(filename).parent)))
-                return ct.CDLL(filename)
-            except OSError:
-                pass
-    raise RuntimeError("NVRTC is unavailable. Install backend/requirements.txt into the Python selected by WYNN_CUDA_PYTHON, or set WYNN_CUDA_NVRTC.")
+    global _nvrtc
+    if _nvrtc is not None:
+        return _nvrtc
+    candidates = []
+    override = os.environ.get("WYNN_CUDA_NVRTC")
+    if override:
+        candidates.append(override)
+    else:
+        try:
+            spec = importlib.util.find_spec("nvidia.cuda_nvrtc")
+        except ModuleNotFoundError:
+            spec = None
+        if spec and spec.submodule_search_locations:
+            for directory in spec.submodule_search_locations:
+                candidates.extend(primary_nvrtc_files(directory))
+        cuda_path = os.environ.get("CUDA_PATH")
+        if cuda_path:
+            for directory in ["bin", "lib64"]:
+                candidates.extend(primary_nvrtc_files(Path(cuda_path) / directory))
+        system_library = ctypes.util.find_library("nvrtc")
+        if system_library:
+            candidates.append(system_library)
+    errors = []
+    for filename in dict.fromkeys(candidates):
+        try:
+            if Path(filename).is_file():
+                filename = str(Path(filename).resolve())
+            if sys.platform == "win32" and os.path.isabs(filename):
+                directory = Path(filename).parent
+                _dll_handles.append(os.add_dll_directory(str(directory)))
+                # NVRTC dynamically opens builtins by basename during compilation.
+                # Preload the primary companion by absolute path for Windows DLL lookup.
+                builtins = sorted(directory.glob("nvrtc-builtins64_*.dll"))
+                if not builtins:
+                    raise OSError(f"Bundled nvrtc-builtins64_*.dll is missing from {directory}")
+                for companion in builtins:
+                    if ".alt" not in companion.name.lower():
+                        _dll_handles.append(ct.CDLL(str(companion.resolve())))
+            _nvrtc = ct.CDLL(filename)
+            return _nvrtc
+        except OSError as error:
+            errors.append(f"{filename}: {error}")
+    detail = "\n".join(errors)
+    raise RuntimeError(
+        "NVRTC is unavailable. Install backend/requirements.txt into the Python selected by "
+        "WYNN_CUDA_PYTHON, or set WYNN_CUDA_NVRTC to the primary compiler library."
+        + ("\n" + detail if detail else "")
+    )
 
 
 def compile_kernel(source, architecture):

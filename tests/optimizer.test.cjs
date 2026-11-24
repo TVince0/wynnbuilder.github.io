@@ -366,3 +366,10 @@ test('host compilation of the shared CUDA skill filter agrees with native net al
     assert.deepEqual(run.stdout.trim().split(/\s+/).map(value=>value==='1'),Array.from(cases,entry=>entry.valid));
   } finally {fs.rmSync(directory,{recursive:true,force:true});}
 });
+
+test('NVRTC loader regressions cover Windows companion DLLs and alternate compiler variants', async () => {
+  const {spawnSync} = require('node:child_process');
+  const {python} = await import('../backend/process.mjs');
+  const result = spawnSync(python,['-m','unittest','discover','-s','tests','-p','test_cuda_loader.py'],{cwd:root,encoding:'utf8'});
+  assert.equal(result.status,0,result.error?.message || result.stderr);
+});

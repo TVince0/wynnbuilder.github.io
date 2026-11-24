@@ -50,3 +50,5 @@ pnpm cuda:check
 ```
 
 The first command checks NVRTC compilation without requiring GPU execution. The second loads the driver, selects the device, compiles and loads the module, then launches a deterministic kernel smoke test. Actual kernel launch and performance require NVIDIA hardware. During development here, PTX compilation and host/service tests were verified. A CUDA device was unavailable, so hardware execution and throughput remain unverified.
+
+The loader selects the primary NVRTC library from NVIDIA's wheel and preloads its bundled Windows `nvrtc-builtins64_*.dll`. Alternate `.alt` compiler variants are excluded from automatic discovery. If upgrading from a version that reported `nvrtc-builtins.alt64_129.dll`, pull the loader fix and rerun `pnpm cuda:check` with the dependencies already installed.
