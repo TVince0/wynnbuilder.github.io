@@ -54,7 +54,7 @@ The search uses the minimum valid skill allocation and leaves spare points unass
 
 Use **Secondary ranking** to add ordered tie breakers. The primary metric has priority, then the first secondary, then subsequent rows. Each can prefer highest or lowest. Secondary scores are displayed on result cards, and settings are remembered locally.
 
-The default **CUDA backend** generates and skill-filters candidate batches on the GPU, then scores a shortlist with up to eight native CPU validators. It uses a fast item-stat proxy and random samples for shortlisting. Your selected final-stat targets, primary ranking and secondary rankings are applied by the native calculator. It runs until stopped. Every returned build is validated, and global optimality is unproven.
+The default **CUDA backend** generates candidate batches on the GPU, then scores a shortlist with up to eight native CPU validators. It compiles your target bounds into soft GPU guidance, prioritizes reducing shortfalls and tries one/two-piece repairs. It also preserves offensive champions, target specialists and random exploration. Near-feasible skill allocations can guide repairs, while every returned result must pass native skill validation. Your selected final-stat targets, primary ranking and secondary rankings are applied by the native calculator. It runs until stopped. Every returned build is validated, and global optimality is unproven.
 
 The explicit **CPU optimization** mode runs until stopped using up to eight CPU workers. Workers search independently, exchange their strongest builds and make one-piece and multi-piece changes. Near-feasible candidates stay available so a later piece can repair missing skill points or target stats. Returned builds always pass the native final calculations, level/class restrictions, complete-loadout skill requirements and every target. Results use the configured primary and secondary rankings.
 
@@ -65,7 +65,11 @@ Choose **CPU exhaustive search** for a full ranking proof over a restricted pool
 All modes cache ability structure by class and active major IDs within a search. Only spells needed by the targets or rankings are evaluated. Generic spell ranking skips individual spell damage calculations. The CPU modes use browser Web Workers. CUDA mode uses the local backend and native Node worker threads.
 
 
+Before the first matching build, the progress panel reports the closest native-evaluated attempt and which targets or skill caps it still misses. These diagnostic states cannot be applied as functioning results. After a match, it reports time to the first matching build. The guidance target count shows which constraints influence GPU fitness; every target still receives native validation. Coverage measures exploration of the combination space, and cannot predict time to a matching build or prove that no match exists.
+
 The progress panel remains visible after stopping. CUDA displays estimated distinct GPU combinations checked out of the allowed total, alongside raw proposals and native evaluations. Sampling can revisit candidates, so the coverage estimate differs from the raw proposal counter. CUDA batches run continuously while a separate bounded shortlist is evaluated natively. Batch size and native shortlist size can be tuned independently. Full final calculations remain CPU work.
+
+After starting a search, **Export search input** downloads its prepared candidate pools, exact rolled/powdered values, selected tomes, ability/buff state, bounds and rankings as `wynnbuilder-search.json`. This is a reproducible diagnostic snapshot of that search. It is separate from the candidate-name import format below.
 
 ## Candidate JSON
 

@@ -74,6 +74,39 @@ const OptimizerCuda = (() => {
       );
       return values;
     }
+    // All GPU target checks are guidance. Native evaluation remains authoritative
+    // for abilities, sets, buffs, powders and final damage calculations.
+    const derived = {genericSpellHit: 1, health: 2, regen: 3, ehp: 4, ehpNoAgi: 4, maxManaTotal: 6, manaRegen: 7, assigned: 15};
+    skp_order.forEach((key, i) => { derived[key] = 10 + i; derived['final' + key] = 10 + i; });
+    const additive = new Set(OptimizerModel.componentKeys);
+    const guidance = (config.rules || []).filter(rule => rule.min != null || rule.max != null)
+      .filter(rule => derived[rule.stat] !== undefined || additive.has(rule.stat))
+      .map(rule => ({...rule, kind: derived[rule.stat] ?? 0}));
+    const combatFamily = config.objective.startsWith('melee') && !guidance.some(rule => rule.stat === 'genericSpellHit') ? 'Md' : 'Sd';
+    function combatRow(item, weapon = false) {
+      const map = item.statMap, result = Array(42).fill(0);
+      ['n', ...skp_elements].forEach((element, i) => {
+        if (weapon) {
+          const range = map.get(element + 'Dam_');
+          const pair = Array.isArray(range?.[1]) ? range[1] : range;
+          const speed = baseDamageMultiplier[attackSpeeds.indexOf(map.get('atkSpd'))] || 1;
+          if (Array.isArray(pair)) {result[i*6] = pair[0]*speed; result[i*6+1] = pair[1]*speed;}
+        }
+        result[i*6+2] = number(map, element+'DamAddMin'); result[i*6+3] = number(map, element+'DamAddMax');
+        result[i*6+4] = number(map, element+combatFamily+'Pct') + number(map, element+'DamPct');
+        result[i*6+5] = number(map, element+combatFamily+'Raw') + number(map, element+'DamRaw');
+      });
+      result[36] = number(map,'r'+combatFamily+'Pct') + number(map,'rDamPct');
+      result[37] = number(map,'r'+combatFamily+'Raw') + number(map,'rDamRaw');
+      result[38] = number(map,'critDamPct');
+      result[39] = number(map,combatFamily.toLowerCase()+'Pct') + number(map,'damPct');
+      result[40] = number(map,combatFamily.toLowerCase()+'Raw') + number(map,'damRaw');
+      return result;
+    }
+    const combat = [], combatBase = Array(42).fill(0);
+    const ruleFeatures = [], ruleBase = guidance.map(rule => rule.stat === 'hp' ? levelToHPBase(config.level) : 0);
+    const rules = guidance.map(rule => [rule.kind, rule.min ?? -1e300, rule.max ?? 1e300,
+      Math.max(1, Math.abs(rule.min ?? 0), Math.abs(rule.max ?? 0))]);
     const items = [],
       offsets = [],
       sizes = [],
@@ -84,6 +117,8 @@ const OptimizerCuda = (() => {
       sizes.push(pool.length);
       for (const entry of pool) {
         items.push(row(entry.item, slot !== 8, slot === 8));
+        combat.push(combatRow(entry.item, slot === 8));
+        ruleFeatures.push(guidance.map(rule => rule.kind === 0 ? number(entry.item.statMap, rule.stat) : 0));
         if (!ids.has(entry.key)) ids.set(entry.key, ids.size);
         rings.push(ids.get(entry.key));
       }
@@ -96,6 +131,8 @@ const OptimizerCuda = (() => {
     for (const item of tomes) {
       if (item.statMap.has("NONE")) continue;
       const values = row(item, false);
+      combatRow(item).forEach((value, i) => combatBase[i] += value);
+      guidance.forEach((rule, i) => { if (rule.kind === 0) ruleBase[i] += number(item.statMap, rule.stat); });
       for (let k = 0; k < 5; k++) base[5 + k] += values[k];
       for (let k = 11; k < 32; k++) base[15 + k] += values[k];
       if (item === guild) {
@@ -126,7 +163,8 @@ const OptimizerCuda = (() => {
       ringPairs,
     );
     return {
-      items,
+      items, ruleFeatures, ruleBase, rules, combat, combatBase,
+      guidedRules: guidance.map(rule => rule.stat),
       total: String(total),
       ringSymmetric: config.ringSymmetric,
       offsets,
@@ -164,26 +202,30 @@ const OptimizerCuda = (() => {
         tomes,
         choices[8].item,
       );
-      if (!OptimizerModel.valid(build, config.characterClass)) continue;
+      const functioning = OptimizerModel.valid(build, config.characterClass);
+      const skillError = Math.max(0, build.assigned_skillpoints - levelToSkillPoints(config.level))
+        + build.base_skillpoints.reduce((sum, value) => sum + Math.max(0, value - 100), 0);
+      // Retain near-feasible states so two-piece repairs can cross skill gaps.
+      if (!functioning && skillError === 0) continue;
       const stats = OptimizerFinal.measurements(
         build,
         config.finalContext,
         requested,
       );
       if (keys.some((key) => !Number.isFinite(stats[key]))) continue;
-      let violation = 0;
+      const shortfalls = [];
+      if (skillError > 0) shortfalls.push({stat:'assigned', value:build.assigned_skillpoints, skillError});
+      let violation = skillError / Math.max(1, levelToSkillPoints(config.level));
       for (const rule of config.rules || []) {
         const value = stats[rule.stat];
         if (!Number.isFinite(value)) {
           violation = Infinity;
           break;
         }
-        if (rule.min != null)
-          violation +=
-            Math.max(0, rule.min - value) / Math.max(1, Math.abs(rule.min));
-        if (rule.max != null)
-          violation +=
-            Math.max(0, value - rule.max) / Math.max(1, Math.abs(rule.max));
+        const below = rule.min == null ? 0 : Math.max(0, rule.min - value);
+        const above = rule.max == null ? 0 : Math.max(0, value - rule.max);
+        if (below || above) shortfalls.push({stat:rule.stat, value, min:rule.min, max:rule.max, below, above});
+        violation += below / Math.max(1, Math.abs(rule.min ?? 1)) + above / Math.max(1, Math.abs(rule.max ?? 1));
       }
       if (!Number.isFinite(violation)) continue;
       const identity = choices.map((choice) => choice.key);
@@ -192,7 +234,7 @@ const OptimizerCuda = (() => {
       output.push({
         signature: JSON.stringify(identity),
         indices: tuple,
-        violation,
+        violation, functioning, shortfalls,
         score: stats[config.objective],
         stats,
         assigned: build.base_skillpoints,

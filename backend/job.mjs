@@ -97,7 +97,9 @@ async function run() {
   let gpuMs = 0,
     nativeMs = 0,
     lastReport = 0,
-    producerError;
+    producerError,
+    closest = null,
+    firstValidSeconds = null;
   const identity = (tuple) => {
     const local = tuple.map((index, slot) => index - payload.offsets[slot]);
     if (config.ringSymmetric && local[4] > local[5])
@@ -127,7 +129,9 @@ async function run() {
     estimatedUnique: Math.min(estimatedUnique, Number(payload.total)),
     gpuMs,
     nativeMs,
-    shortlist,
+    shortlist, closest, firstValidSeconds,
+    guidedRules: payload.guidedRules,
+    totalRules: config.rules.filter(rule => rule.min != null || rule.max != null).length,
     examined: String(tested),
     elapsed: (performance.now() - start) / 1000,
     workers: count,
@@ -147,7 +151,7 @@ async function run() {
     const chosen = new Map(
       values
         .slice()
-        .sort((a, b) => b.proxy - a.proxy)
+        .sort((a, b) => a.violation - b.violation || b.proxy - a.proxy)
         .slice(0, half)
         .map((row) => [row.key, row]),
     );
@@ -176,6 +180,7 @@ async function run() {
             key,
             tuple,
             proxy: batch.proxyScores?.[index] || 0,
+            violation: batch.violations?.[index] || 0,
             ticket: Math.random(),
           });
       }
@@ -221,14 +226,34 @@ async function run() {
     for (const { rows } of responses)
       for (const row of rows) {
         archive.set(row.signature, row);
-        if (row.violation === 0) best.set(row.signature, row);
+        if (row.violation === 0 && row.functioning) {
+          best.set(row.signature, row);
+          firstValidSeconds ??= (performance.now() - start) / 1000;
+        }
       }
-    const population = [...archive.values()]
-      .sort((a, b) => a.violation - b.violation || compare(a, b))
-      .slice(0, 80);
+    const rows = [...archive.values()];
+    const ordered = rows.slice().sort((a, b) => a.violation - b.violation || compare(a, b));
+    const selected = new Map(ordered.slice(0, 40).map(row => [row.signature, row]));
+    const add = (candidates, count) => {
+      for (const row of candidates.slice(0, count)) if (selected.size < 80) selected.set(row.signature, row);
+    };
+    // Preserve offensive champions and candidates missing different requirements.
+    // This prevents a single recovery-heavy local optimum replacing all parents.
+    add(rows.filter(row => row.functioning).sort(compare), 8);
+    for (const rule of config.rules) {
+      const gap = row => {
+        const value = row.stats[rule.stat];
+        return (rule.min == null ? 0 : Math.max(0, rule.min-value)/Math.max(1,Math.abs(rule.min)))
+          + (rule.max == null ? 0 : Math.max(0,value-rule.max)/Math.max(1,Math.abs(rule.max)));
+      };
+      add(rows.slice().sort((a,b) => (a.violation-gap(a))-(b.violation-gap(b)) || compare(a,b)), 6);
+    }
+    add(ordered, 80);
+    const population = [...selected.values()];
     archive.clear();
     for (const row of population) archive.set(row.signature, row);
     elites = population.map((row) => row.indices);
+    closest = population[0] || closest;
     const ranked = [...best.values()].sort(compare).slice(0, config.limit);
     best.clear();
     for (const row of ranked) best.set(row.signature, row);

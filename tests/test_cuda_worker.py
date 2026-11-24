@@ -28,11 +28,12 @@ class FakeCuda:
     def read(self, array, pointer):
         array[:] = self.arrays[pointer.value]
     def launch(self, function, blocks, args):
-        assert function == 'propose' and len(args) == 17
+        assert function == 'propose' and len(args) == 24
         self.arrays[5][:] = self.arrays[1]
-        self.arrays[6][0] = blocks * 256
+        self.arrays[6][:] = blocks * 256
         self.arrays[8][:] = 500
         self.arrays[9][12] = 3
+        self.arrays[13][:] = 0
     def close(self):
         self.closed = True
 

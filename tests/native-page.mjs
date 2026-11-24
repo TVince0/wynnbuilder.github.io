@@ -182,6 +182,19 @@ for (const cb of doc.querySelectorAll(".optimizer-pin input"))
 doc.getElementById("optimizer-rules").replaceChildren();
 doc.getElementById("optimizer-run").click();
 await wait(() => doc.querySelector(".optimizer-result"), "no result");
+assert.equal(doc.getElementById('optimizer-export-search').disabled,false);
+let exportedBlob;
+win.URL.createObjectURL=blob=>{exportedBlob=blob;return 'blob:search-export-test';};
+win.URL.revokeObjectURL=()=>{};
+const anchorClick=win.HTMLAnchorElement.prototype.click;
+win.HTMLAnchorElement.prototype.click=function(){};
+doc.getElementById('optimizer-export-search').click();
+win.HTMLAnchorElement.prototype.click=anchorClick;
+const exportedSearch=JSON.parse(await exportedBlob.text());
+assert.equal(exportedSearch.format,'wynn-optimizer-search-v1');
+assert.equal(exportedSearch.config.objective,lastRequest.config.objective);
+assert.equal(exportedSearch.pools.length,9);
+assert.equal(exportedSearch.pools[0][0].map.__wynnType,'Map');
 const stats = vm.runInContext(
   "OptimizerModel.measurements(build_node.get_value())",
   win,
@@ -469,10 +482,31 @@ try {
     }
   }
   assert.equal(running.estimatedUnique,1);
+  assert.ok(running.firstValidSeconds >= 0);
+  assert.equal(running.closest.functioning,true);
+  assert.deepEqual(running.closest.shortfalls,[]);
   assert.ok(BigInt(running.total)>=1n);
   assert.ok(Math.abs(running.builds[0].score-expectedCudaScore)<1e-7,"backend score must equal the native page");
   completedController.abort();
   await sleep(250);
+  // A near miss is progress, never an accepted functioning result.
+  const missController=new AbortController();
+  const missRequest=structuredClone(request);
+  missRequest.config.rules=[{stat:'health',max:-1}];
+  const miss=await fetch(origin+'/api/cuda/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(missRequest,encode),signal:missController.signal});
+  const missReader=miss.body.getReader(),missDecoder=new TextDecoder();let missBuffer='',closest;
+  while(!closest){
+    const {value,done}=await missReader.read();assert.ok(!done);
+    missBuffer+=missDecoder.decode(value,{stream:true});
+    let newline;
+    while((newline=missBuffer.indexOf('\n'))>=0){
+      const event=JSON.parse(missBuffer.slice(0,newline));missBuffer=missBuffer.slice(newline+1);
+      assert.ok(!event.error,event.error);
+      if(event.progress?.closest){assert.deepEqual(event.progress.builds,[]);assert.equal(event.progress.firstValidSeconds,null);closest=event.progress.closest;}
+    }
+  }
+  assert.ok(closest.shortfalls.some(gap=>gap.stat==='health'&&gap.above>0));
+  missController.abort();await sleep(250);
   fs.writeFileSync(protocol.replace(/\.py$/, ".fail"), "");
   const failedSearch = await send();
   const failedEvents = (await failedSearch.text()).trim().split("\n").map(line => JSON.parse(line));

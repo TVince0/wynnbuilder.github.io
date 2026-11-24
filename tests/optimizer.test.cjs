@@ -440,3 +440,118 @@ test('raw and percentage regen targets combine with final regen and independent 
   assert.equal(result.raw,'raw');
   assert.deepEqual(Array.from(result.tie),['balanced','percent','raw']);
 });
+
+test('CUDA guidance compiles arbitrary additive and derived targets and retains skill repair states', () => {
+  const c=context();
+  vm.runInContext(fs.readFileSync(path.join(root,'backend/native_search.js'),'utf8'),c.ctx);
+  const result=c.eval(`(() => {
+    const items=emptyEquipment().concat([weapon()]);
+    items[0]=fixture('helmet','near',{strReq:101,hprRaw:40,hprPct:50});
+    const pools=items.map(item=>[{key:item.statMap.get('name'),item}]);
+    const config={level:106,characterClass:'Mage',objective:'sdRaw',direction:'max',duplicateRings:true,
+      rules:[{stat:'hprRaw',min:30},{stat:'hprPct',min:-100},{stat:'regen',min:30},{stat:'manaRegen',min:10},{stat:'maxManaTotal',min:115},{stat:'genericSpellHit',min:3000},{stat:'spell:3:Unknown',min:1}]};
+    const prepared={pools,tomes:[],config},payload=OptimizerCuda.pack(prepared);
+    globalThis.OptimizerFinal={measurements:build=>({...OptimizerModel.measurements(build),'spell:3:Unknown':1,genericSpellHit:4000})};
+    return {payload,row:OptimizerCuda.evaluateBatch(prepared,payload,[payload.offsets])[0]};
+  })()`);
+  assert.deepEqual(Array.from(result.payload.guidedRules),['hprRaw','hprPct','regen','manaRegen','maxManaTotal','genericSpellHit']);
+  assert.equal(result.payload.rules.length,6);
+  assert.equal(result.payload.ruleFeatures[0][0],40);
+  assert.equal(result.payload.ruleFeatures[0][1],50);
+  assert.equal(result.payload.rules[1][1],-100);
+  assert.equal(result.row.functioning,false);
+  assert.ok(result.row.violation>0);
+  assert.ok(result.row.shortfalls.some(gap=>gap.skillError>0));
+});
+
+test('shared CUDA fitness prioritizes satisfying multiple targets over higher damage', t => {
+  const {spawnSync}=require('node:child_process');
+  if(spawnSync('g++',['--version']).error){t.skip('g++ required');return;}
+  const directory=fs.mkdtempSync(path.join(root,'.cuda-test-'));
+  try {
+    const source=path.join(directory,'guided.cpp'),binary=path.join(directory,'guided');
+    fs.writeFileSync(source,`
+      #include <cmath>
+      #include <iostream>
+      using std::isfinite;
+      #define __device__
+      #define WYNN_HOST_TEST
+      #include "${path.join(root,'backend/search.cu')}"
+      int main(){
+        double items[9*32]={0},base[47]={0},features[9*5]={0},rulebase[5]={0};
+        int indices[9];for(int i=0;i<9;i++)indices[i]=i;
+        base[26]=500;items[8*32+12]=-100;items[8*32+13]=-150;items[8*32+18]=-37;items[8*32+20]=4000;
+        double rules[]={3,30,1e300,30, 7,10,1e300,10, 6,115,1e300,115, 0,-100,1e300,100, 1,3000,1e300,3000};
+        features[8*5+3]=-150;
+        items[15]=200;
+        double damage,damageError,repair,repairError;
+        evaluate_guided(items,indices,base,200,1,1,features,rulebase,rules,5,damage,damageError);
+        items[15]=0;items[12]=200;items[13]=100;items[18]=25;items[2]=20;features[3]=100;
+        bool valid=evaluate_guided(items,indices,base,200,1,1,features,rulebase,rules,5,repair,repairError);
+        std::cout<<(damage>repair)<<" "<<valid<<" "<<(repairError==0)<<" "<<better(repairError,repair,damageError,damage)<<" ";
+        items[5]=101;
+        bool invalid=evaluate_guided(items,indices,base,200,1,1,features,rulebase,rules,5,repair,repairError);
+        std::cout<<invalid<<" "<<(isfinite(repairError)&&repairError>0);
+      }
+    `);
+    const compile=spawnSync('g++',['-std=c++14','-O2',source,'-o',binary],{encoding:'utf8'});
+    assert.equal(compile.status,0,compile.stderr);
+    const run=spawnSync(binary,[],{encoding:'utf8'});
+    assert.equal(run.status,0,run.stderr);
+    assert.equal(run.stdout.trim(),'1 1 1 1 0 1');
+  }finally{fs.rmSync(directory,{recursive:true,force:true});}
+});
+
+test('elemental CUDA damage guidance matches native unbuffed generic spell hits across weapons', t => {
+  const {spawnSync}=require('node:child_process');
+  if(spawnSync('g++',['--version']).error){t.skip('g++ required');return;}
+  const c=context();
+  c.ctx.structuredClone=structuredClone;
+  for(const file of ['js/damage_calc.js','backend/native_search.js'])
+    vm.runInContext(fs.readFileSync(path.join(root,file),'utf8'),c.ctx);
+  const cases=c.eval(`(() => {
+    const output=[];
+    for(const name of ['Warp','Cascade','Singularity','Fatal','Lament','Freedom'])for(const sign of [-1,0,1,2]){
+      const gear=emptyEquipment();
+      gear[0]=fixture('helmet','damage',{sdPct:sign*85,sdRaw:sign*125,damPct:20,damRaw:30,
+        eSdPct:40,aDamPct:60,rSdRaw:sign*80,rSdPct:35,critDamPct:sign*15,nSdRaw:90,aDamRaw:45,
+        aDamAddMin:20,aDamAddMax:50,nDamAddMin:10,nDamAddMax:40,str:30,dex:20,int:15,agi:25});
+      const w=OptimizerModel.prepare(itemMap.get(name),'realistic',{},sign===2?[29,29,29]:[]);
+      const build=OptimizerModel.assemble(106,gear,[],w),stats=new Map(build.statMap);
+      skp_order.forEach((key,i)=>stats.set(key,build.total_skillpoints[i]));
+      const dmg=calculateSpellDamage(stats,w.statMap,[100,0,0,0,0,0],true),crit=skillPointsToPercentage(stats.get('dex'));
+      const expected=(1-crit)*(dmg[0][0]+dmg[0][1])/2+crit*(dmg[1][0]+dmg[1][1])/2;
+      const pools=gear.concat([w]).map(item=>[{key:item.statMap.get('name'),item}]);
+      const payload=OptimizerCuda.pack({pools,tomes:[],config:{level:106,objective:'genericSpellHit',rules:[]}});
+      output.push({payload,skills:build.total_skillpoints,expected,name,sign});
+    }
+    return output;
+  })()`);
+  const directory=fs.mkdtempSync(path.join(root,'.cuda-test-'));
+  try {
+    const source=path.join(directory,'damage.cpp'),binary=path.join(directory,'damage');
+    fs.writeFileSync(source,`
+      #include <cmath>
+      #include <iostream>
+      #include <iomanip>
+      using std::isfinite;
+      #define __device__
+      #define WYNN_HOST_TEST
+      #include "${path.join(root,'backend/search.cu')}"
+      int main(){int count;std::cin>>count;std::cout<<std::setprecision(17);
+        while(count--){double combat[9*42],base[42],skills[5];int indices[9];
+          for(auto&v:combat)std::cin>>v;for(auto&v:base)std::cin>>v;for(auto&v:skills)std::cin>>v;
+          for(int i=0;i<9;i++)indices[i]=i;
+          std::cout<<generic_damage(combat,base,indices,skills)<<"\\n";
+        }
+      }
+    `);
+    const compile=spawnSync('g++',['-std=c++14','-O2',source,'-o',binary],{encoding:'utf8'});
+    assert.equal(compile.status,0,compile.stderr);
+    const input=cases.length+' '+cases.map(entry=>[...entry.payload.combat.flat(),...entry.payload.combatBase,...entry.skills].join(' ')).join(' ');
+    const run=spawnSync(binary,[],{input,encoding:'utf8'});
+    assert.equal(run.status,0,run.stderr);
+    const actual=run.stdout.trim().split(/\s+/).map(Number);
+    for(let i=0;i<cases.length;i++)assert.ok(Math.abs(actual[i]-cases[i].expected)<1e-7,cases[i].name+' '+cases[i].sign+': '+actual[i]+' vs '+cases[i].expected);
+  }finally{fs.rmSync(directory,{recursive:true,force:true});}
+});

@@ -3,6 +3,7 @@ const BuildOptimizer = (() => {
   const slots = OptimizerModel.slots;
   const stateKey = "wynnbuilder.optimizer.v1";
   const overrides = new Map();
+  let preparedSearch = null;
   let mode = "optimistic",
     worker = null,
     results = [],
@@ -353,12 +354,27 @@ const BuildOptimizer = (() => {
     const text = document.getElementById("optimizer-progress-text");
     const bar = document.getElementById("optimizer-coverage");
     const timings = document.getElementById("optimizer-timings");
+    const closest = document.getElementById("optimizer-closest");
+    closest.textContent = "";
     container.hidden = false;
     const total = BigInt(data.total).toLocaleString();
     if (data.cuda) {
       const ratio = Math.min(1, (data.estimatedUnique || 0) / Math.max(1, Number(data.total)));
       const percent = ratio > 0 && ratio < .00000001 ? "<0.000001" : (ratio*100).toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
       bar.hidden = false; bar.value = ratio;
+      const coverage = "Coverage measures exploration, not time to a matching build.";
+      if (data.firstValidSeconds != null) {
+        closest.textContent = "First matching build after " + format(data.firstValidSeconds) + "s. " + coverage;
+      } else if (data.closest) {
+        const gaps = (data.closest.shortfalls || []).map(gap => gap.skillError
+          ? "Skill points: " + format(gap.skillError) + " excess points"
+          : OptimizerModel.label(gap.stat) + " " + format(gap.value) +
+            (gap.below ? " (needs ≥ " + format(gap.min) + ")" : " (needs ≤ " + format(gap.max) + ")"));
+        closest.textContent = "Closest native attempt · " + (gaps.join(" · ") || "Checking targets…") + ". " + coverage;
+      } else {
+        closest.textContent = "Searching for a functioning build that meets all targets. " + coverage;
+      }
+      if (data.guidedRules) closest.textContent += " GPU guidance: " + data.guidedRules.length + " / " + data.totalRules + " targets; native validation checks every target.";
       text.textContent = "Estimated GPU coverage " + count(data.estimatedUnique || 0) + " / " + total + " (" + percent + "%) · " + count(data.tested) + " proposals · " + count(data.evaluated) + " native evaluations";
       timings.textContent = "GPU batch " + format(data.gpuMs || 0) + " ms · Native validation cycle " + format(data.nativeMs || 0) + " ms · " + count(Math.round(data.tested / Math.max(.001, data.elapsed))) + " GPU proposals/s · " + count(Math.round(data.evaluated / Math.max(.001, data.elapsed))) + " native evaluations/s";
     } else {
@@ -469,6 +485,9 @@ const BuildOptimizer = (() => {
         sets: [...sets],
         config,
       };
+      preparedSearch = structuredClone(request);
+      document.getElementById('optimizer-export-search').disabled = false;
+      document.getElementById('optimizer-export-search').title = 'Export the last search’s prepared input';
       worker.onmessage = ({ data }) => {
         if (data.progress) {
           showProgress(data.progress);
@@ -719,12 +738,12 @@ const BuildOptimizer = (() => {
             <div class="optimizer-controls optimizer-search-options">
               <label>Search mode<select id="optimizer-strategy" class="optimizer-input"><option value="cuda">CUDA backend</option><option value="fast">CPU optimization</option><option value="exhaustive">CPU exhaustive search</option></select></label>
               <label>CPU workers<select id="optimizer-workers" class="optimizer-input"></select></label>
-              <label id="optimizer-cuda-batch-label">CUDA batch size<select id="optimizer-cuda-blocks" class="optimizer-input"><option value="16">4,096</option><option value="64">16,384</option><option value="256" selected>65,536</option><option value="1024">262,144</option><option value="4096">1,048,576</option></select></label>
+              <label id="optimizer-cuda-batch-label">CUDA base batch size<select id="optimizer-cuda-blocks" class="optimizer-input"><option value="16">4,096</option><option value="64">16,384</option><option value="256" selected>65,536</option><option value="1024">262,144</option><option value="4096">1,048,576</option></select></label>
             </div>
             <label id="optimizer-cuda-shortlist-label">Native shortlist per cycle<select id="optimizer-cuda-shortlist" class="optimizer-input"><option>64</option><option>128</option><option selected>256</option><option>512</option><option>1024</option></select></label>
             <button type="button" class="optimizer-button" id="optimizer-cuda-check">Check CUDA backend</button>
             <p id="optimizer-cuda-status" class="optimizer-hint" role="status"></p>
-            <p class="optimizer-hint" id="optimizer-cuda-hint">Larger CUDA batches screen more candidates per launch. Native shortlist size controls CPU work per validation cycle. GPU coverage estimates distinct skill-screened combinations. Native evaluations use the full final-stat calculator.</p>
+            <p class="optimizer-hint" id="optimizer-cuda-hint">Larger CUDA batches start more candidates per launch; repair attempts add checks. Native shortlist size controls CPU work per validation cycle. GPU coverage estimates distinct checked combinations. Native evaluations use the full final-stat calculator.</p>
             <p class="optimizer-hint" id="optimizer-search-help">Search runs until you stop it. Every returned result is validated. Global optimality is unproven.</p>
           </section>
           <section class="optimizer-card">
@@ -741,9 +760,9 @@ const BuildOptimizer = (() => {
             <button type="button" class="optimizer-button" id="optimizer-add-ranking">+ Secondary ranking</button>
             <p class="optimizer-hint">Rankings apply in order. Later rankings break ties.</p>
             <details class="optimizer-notes"><summary>How generic spell damage is measured</summary><p>Generic spell hit is the average damage of a 100% spell hit using the weapon’s existing elements. It combines shared raw and percentage damage, elemental bonuses, skill points, critical chance and general buffs. Individual spell conversions and bonuses are excluded. It is a comparison benchmark. Each actual spell applies its own scaling.</p></details>
-            <div class="optimizer-actions"><button type="button" class="optimizer-button optimizer-primary" id="optimizer-run">Find builds <span aria-hidden="true">→</span></button><button type="button" class="optimizer-button" id="optimizer-cancel" hidden>Cancel search</button></div>
+            <div class="optimizer-actions"><button type="button" class="optimizer-button optimizer-primary" id="optimizer-run">Find builds <span aria-hidden="true">→</span></button><button type="button" class="optimizer-button" id="optimizer-cancel" hidden>Cancel search</button><button type="button" class="optimizer-button" id="optimizer-export-search" disabled title="Start a search to prepare its full input">Export search input</button></div>
             <p id="optimizer-message" role="status"></p>
-            <div id="optimizer-progress" hidden><progress id="optimizer-coverage" max="1" value="0" aria-label="Search coverage"></progress><p id="optimizer-progress-text"></p><p id="optimizer-timings" class="optimizer-hint"></p></div>
+            <div id="optimizer-progress" hidden><progress id="optimizer-coverage" max="1" value="0" aria-label="Search coverage"></progress><p id="optimizer-progress-text"></p><p id="optimizer-timings" class="optimizer-hint"></p><p id="optimizer-closest" class="optimizer-hint" role="status"></p></div>
           </section>
           <section class="optimizer-result-section" aria-label="Ranked builds"><div id="optimizer-results"></div></section>
         </div>
@@ -786,7 +805,7 @@ const BuildOptimizer = (() => {
       document.getElementById("optimizer-cuda-check").hidden = !cuda;
       document.getElementById("optimizer-cuda-status").hidden = !cuda;
       document.getElementById("optimizer-search-help").textContent = cuda
-        ? "CUDA generates and skill-filters batches. Native CPU validators score the shortlist against your final-stat targets and rankings. Search is approximate and runs until you stop it. Requires the local NVIDIA backend."
+        ? "CUDA guides candidates toward your targets and repairs one/two-piece changes. Native CPU validators enforce final-stat targets and skill validity. Search is approximate and runs until you stop it. Requires the local NVIDIA backend."
         : exhaustive
         ? "Exhaustive search proves the best ranking when it finishes. Large item pools can take a very long time. Uses one worker."
         : "Search runs until you stop it. Every returned result is validated. Global optimality is unproven. Pools of 256 combinations or fewer are completed exhaustively.";
@@ -861,6 +880,19 @@ const BuildOptimizer = (() => {
     if (item_final_nodes[8].get_value()?.statMap.has("NONE"))
       document.getElementById("optimizer-class").value = "wand";
     runButton.onclick = search;
+    document.getElementById('optimizer-export-search').onclick = () => {
+      if (!preparedSearch) return;
+      const encode = (_key, value) => {
+        const kind = Object.prototype.toString.call(value);
+        return kind === '[object Map]' ? {__wynnType:'Map', value:[...value]}
+          : kind === '[object Set]' ? {__wynnType:'Set', value:[...value]} : value;
+      };
+      const data = JSON.stringify({format:'wynn-optimizer-search-v1', ...preparedSearch}, encode);
+      const url = URL.createObjectURL(new Blob([data], {type:'application/json'}));
+      const download = element('a', {href:url, download:'wynnbuilder-search.json'});
+      download.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    };
     cancelButton.onclick = () => {
       cancel();
       notice("Search stopped. Results found so far are preserved.");
