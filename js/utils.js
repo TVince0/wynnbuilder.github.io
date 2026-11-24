@@ -1499,7 +1499,7 @@ function show_tab(target, tabs) {
 
 // mobile navbar appearance control
 let scrollPos = 0
-if (screen.width < 992) {
+if (typeof document !== "undefined" && screen.width < 992) {
     document.addEventListener('scroll', (e) => {
         if (document.documentElement.scrollTop - scrollPos > 20) {
             document.getElementById("mobile-navbar").style.display = "none";

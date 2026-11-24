@@ -1,0 +1,252 @@
+/* The optimizer follows the native builder's dark UI and remains independent of Bootstrap's scaled font. */
+#build-optimizer {
+  margin: 18px 24px 24px 86px;
+  padding: 20px;
+  border: 1px solid #44534f;
+  border-radius: 8px;
+  background: #18221f;
+  color: #edf3ef;
+  font:
+    15px/1.5 Nunito,
+    system-ui,
+    sans-serif;
+}
+.optimizer-heading,
+.optimizer-target-heading,
+.optimizer-actions,
+.optimizer-result-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.optimizer-heading h2 {
+  font-size: 23px;
+  margin: 0;
+}
+.optimizer-heading p {
+  margin: 4px 0;
+  color: #b9c9c0;
+}
+#optimizer-count {
+  font-size: 13px;
+  color: #a6d5ba;
+  white-space: nowrap;
+}
+.optimizer-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+.optimizer-controls label {
+  font-size: 13px;
+  color: #c9d9cd;
+  font-weight: 600;
+}
+.optimizer-input {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  border: 1px solid #607368;
+  border-radius: 5px;
+  background: #0f1814;
+  color: #f0f5f1;
+  min-height: 36px;
+  padding: 7px 9px;
+  font:
+    14px/1.4 system-ui,
+    sans-serif;
+}
+.optimizer-input:focus-visible,
+.optimizer-button:focus-visible {
+  outline: 2px solid #a0dfbc;
+  outline-offset: 2px;
+}
+.optimizer-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #607368;
+  border-radius: 5px;
+  background: #263c30;
+  color: #edf6ef;
+  padding: 6px 10px;
+  min-height: 32px;
+  font:
+    14px/1.4 Nunito,
+    system-ui,
+    sans-serif;
+  cursor: pointer;
+}
+.optimizer-button:hover {
+  background: #365340;
+}
+.optimizer-button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.optimizer-primary {
+  background: #9dd4a9;
+  color: #142719;
+  font-weight: bold;
+  border-color: #b4deba;
+}
+.optimizer-primary:hover {
+  background: #b9e6c2;
+}
+.optimizer-target-heading h3 {
+  font-size: 17px;
+  margin: 0;
+}
+.optimizer-rule {
+  display: grid;
+  grid-template-columns: minmax(140px, 2fr) minmax(60px, 1fr) minmax(
+      60px,
+      1fr
+    ) 36px;
+  gap: 7px;
+  align-items: center;
+  margin: 8px 0;
+}
+.optimizer-rule .optimizer-input {
+  margin: 0;
+}
+.optimizer-locks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
+  gap: 7px;
+  margin: 18px 0 10px;
+}
+.optimizer-pin {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+  border: 1px solid #3f5446;
+  border-radius: 5px;
+  padding: 5px 8px;
+  background: #121d16;
+}
+.optimizer-pin label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+  margin: 0;
+}
+.optimizer-pin .optimizer-button {
+  font-size: 12px;
+  min-height: 26px;
+  padding: 3px 6px;
+}
+.optimizer-check {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  font-size: 14px;
+}
+.optimizer-check input,
+.optimizer-pin input {
+  accent-color: #a7deb2;
+  width: 15px;
+  height: 15px;
+}
+.optimizer-scope {
+  color: #b9c9c0;
+  font-size: 13px;
+  max-width: 1000px;
+  margin: 12px 0 4px;
+}
+#optimizer-tome {
+  color: #d2dfbd;
+  font-size: 13px;
+}
+#optimizer-message {
+  margin: 12px 0 0;
+  color: #c5dbbd;
+  overflow-wrap: anywhere;
+}
+.optimizer-error {
+  color: #ffb4a5 !important;
+}
+.optimizer-actions {
+  justify-content: flex-start;
+  margin-top: 12px;
+}
+.optimizer-actions label {
+  margin: 0;
+}
+.optimizer-result {
+  border-top: 1px solid #435748;
+  padding: 13px 0 5px;
+  margin-top: 10px;
+}
+.optimizer-result p {
+  font-size: 13px;
+  margin: 7px 0;
+  color: #d3dfd5;
+}
+.optimizer-result small {
+  color: #acc8ad;
+}
+.optimizer-result .optimizer-allocation {
+  color: #a4bbab;
+  font-size: 12px;
+}
+.optimizer-dialog {
+  background: #19251e;
+  border: 1px solid #658270;
+  border-radius: 9px;
+  color: #edf3ef;
+  padding: 22px;
+  width: min(580px, 94vw);
+  max-height: 88vh;
+  overflow: auto;
+  font:
+    14px/1.5 Nunito,
+    system-ui,
+    sans-serif;
+}
+.optimizer-dialog::backdrop {
+  background: #000b;
+}
+.optimizer-dialog h3 {
+  font-size: 22px;
+}
+.optimizer-dialog p {
+  color: #bdcec1;
+}
+.optimizer-roll-row {
+  display: grid;
+  grid-template-columns: 1.6fr 0.9fr 90px;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid #3d4f44;
+  padding: 6px 0;
+  margin: 0;
+}
+.optimizer-roll-row small {
+  color: #a2b9a8;
+}
+.optimizer-roll-row .optimizer-input {
+  margin: 0;
+}
+@media (max-width: 991px) {
+  #build-optimizer {
+    margin: 18px 12px;
+    padding: 14px;
+  }
+  .optimizer-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .optimizer-rule {
+    grid-template-columns: 1.6fr 0.75fr 0.75fr 32px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #build-optimizer * {
+    scroll-behavior: auto;
+  }
+}

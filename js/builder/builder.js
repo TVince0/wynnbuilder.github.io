@@ -62,6 +62,7 @@ function loadBuild() {
 }
 
 function resetFields(){
+    if (typeof BuildOptimizer !== "undefined") BuildOptimizer.reset();
     for (const i of powder_inputs) {
         setValue(i, "");
     }
@@ -487,6 +488,7 @@ async function init() {
         }
     }
     init_var_stat_maps();
+    if (typeof BuildOptimizer !== "undefined") BuildOptimizer.mount();
 }
 
 window.onerror = function(message, source, lineno, colno, error) {

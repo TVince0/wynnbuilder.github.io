@@ -1,7 +1,7 @@
 /** 
  * This file defines a class representing the player Build.
  *
- * Keeps track of equipment list, equip order, skillpoint assignment (initial),
+ * Keeps track of equipment, minimum net skillpoint assignment,
  * Aggregates item stats into a statMap to be used in damage calculation.
  */
 
@@ -18,8 +18,8 @@ class Build {
      * @param {String[]} items: List of equipment names that make up the build.
      *                    In order: Helmet, Chestplate, Leggings, Boots, Ring1, Ring2, Brace, Neck, Tomes [x7].
      * @param {Item} weapon: Weapon that this build is using.
-     * @param {List[Item]} _wynn_order_equipment: Equipment to consider for skillpoint
-     *                    calculation, in wynn order (boots->helmet, ring1->neck, tome)
+     * @param {List[Item]} _wynn_order_equipment: Armour/accessories and guild tome
+     *                    contributing to the complete-loadout skill calculation.
      */
     constructor(level, equipment, tomes, weapon, _wynn_order_equipment){
 
@@ -34,7 +34,6 @@ class Build {
         } else {
             errors.push("Level is not a string or number.");
         }
-        document.getElementById("level-choice").value = this.level;
 
         this.availableSkillpoints = levelToSkillPoints(this.level);
         this.items = equipment.concat([...tomes, weapon]);
@@ -120,7 +119,7 @@ class Build {
         statMap.get('damMult').set('tome', statMap.get('damMobs'));
         statMap.get('defMult').set('tome', statMap.get('defMobs'));
         for (const [setName, count] of this.activeSetCounts) {
-            const bonus = sets.get(setName).bonuses[count-1];
+            const bonus = sets.get(setName).bonuses[Math.min(count, sets.get(setName).bonuses.length)-1];
             for (const id in bonus) {
                 if (id == "majorIds") {
                     for (const major_id of bonus[id]){

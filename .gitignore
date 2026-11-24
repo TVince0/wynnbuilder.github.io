@@ -14,3 +14,7 @@ lib/
 pyvenv.cfg
 
 __pycache__
+
+# Local development and generated static output
+node_modules/
+dist/

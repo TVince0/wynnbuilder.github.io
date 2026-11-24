@@ -1,314 +1,55 @@
 /**
- * Apply item set information.
+ * Allocate the minimum manual points for a complete Fruma loadout.
+ *
+ * Requirements use the net bonuses of all non-crafted armour/accessories and
+ * the equipped guild tome. A piece cannot pay its own requirement. Crafted,
+ * weapon and set bonuses affect final skills but cannot unlock requirements.
+ * No equip-order search or partial-loadout rejection is involved.
+ *
+ * Return layout is shared with Build and its skill-point display.
  */
-function apply_set(setName, activeSetCounts) {
-    let setCount = activeSetCounts.get(setName);
-    if (setCount) {
-        activeSetCounts.set(setName, setCount + 1);
-    }
-    else {
-        activeSetCounts.set(setName, 1);
-    }
-}
-
-/**
- * Apply skillpoint bonuses from an item.
- * Also applies set deltas.
- * Modifies the skillpoints array.
- */
-function apply_skillpoints(skillpoints, item) {
-    for (let i = 0; i < 5; i++) {
-        skillpoints[i] += item.skillpoints[i];
-    }
-}
-
-/**
- * Apply skillpoints until this item can be worn.
- * Also applies set deltas.
- * Confusingly, does not modify the skillpoints array.
- * Instead, return an array of deltas.
- */
-function apply_to_fit(skillpoints, item, skillpoint_min, activeSetCounts) {
-    let applied = [0, 0, 0, 0, 0];
-    for (let i = 0; i < 5; i++) {
-        if (item.skillpoints[i] < 0 && skillpoint_min[i]) {
-            const unadjusted = skillpoints[i] + item.skillpoints[i];
-            const delta = skillpoint_min[i] - unadjusted;
-            if (delta > 0) {
-                applied[i] += delta;
-            }
-        }
-        // NOTE: FRUMA change: Negative req is treated as zero req. No more requirement effect under zero
-        if (item.reqs[i] <= 0) continue;
-        skillpoint_min[i] = Math.max(skillpoint_min[i], item.reqs[i] + item.skillpoints[i]);
-        const req = item.reqs[i];
-        const cur = skillpoints[i];
-        if (req > cur) {
-            const diff = req - cur;
-            applied[i] += diff;
-        }
-    }
-    return applied;
-}
-
 function calculate_skillpoints(equipment, weapon) {
-    // const start = performance.now();
-    // Calculate equipment equipping order and required skillpoints.
-    // Return value: [equip_order, best_skillpoints, final_skillpoints, best_total];
-    let fixed = [];
-    let consider = [];
-    let noboost = [];
-    let negative_only = [];
-    let crafted = [];
-    weapon.skillpoints = weapon.get('skillpoints');
-    weapon.reqs = weapon.get('reqs');
-    weapon.set = weapon.get('set');
-    for (const item of equipment) {
-        item.skillpoints = item.get('skillpoints');
-        item.reqs = item.get('reqs');
-        item.set = item.get('set');
-        if (item.get("crafted")) {
-            crafted.push(item);
-        }
-        else if (item.get("reqs").every(x => x === 0)) {
-            fixed.push(item);
-        }
-        else if (item.skillpoints.every(x => x == 0)) {
-            noboost.push(item);
-        }
-        else if (item.skillpoints.every(x => x <= 0)) {
-            negative_only.push(item);
-        }
-        else {
-            consider.push(item);
-        }
+  const all = equipment.concat(weapon ? [weapon] : []);
+  const eligible = equipment.filter((item) => !item.get("crafted"));
+  const support = [0, 0, 0, 0, 0];
+  const assigned = [0, 0, 0, 0, 0];
+  const itemSkills = [0, 0, 0, 0, 0];
+  const activeSets = new Map();
+  const values = (item) =>
+    item.get("skillpoints") || skp_order.map((key) => item.get(key) || 0);
+
+  for (const item of eligible) {
+    const bonus = values(item);
+    for (let i = 0; i < 5; i++) support[i] += bonus[i];
+  }
+  for (const item of all) {
+    const reqs =
+      item.get("reqs") || skp_order.map((key) => item.get(key + "Req") || 0);
+    const bonus = values(item);
+    const ownCounts = item !== weapon && !item.get("crafted");
+    for (let i = 0; i < 5; i++) {
+      if (reqs[i] > 0) {
+        const available = support[i] - (ownCounts ? bonus[i] : 0);
+        assigned[i] = Math.max(assigned[i], Math.ceil(reqs[i] - available));
+      }
+      itemSkills[i] += bonus[i];
     }
-
-
-    // Separate out the no req items and add them to the static skillpoint base.
-    let static_skillpoints_base = [0, 0, 0, 0, 0]
-    let static_activeSetCounts = new Map()
-    for (const item of fixed) {
-        apply_skillpoints(static_skillpoints_base, item);
-    }
-
-    let best = consider;
-    let final_skillpoints = static_skillpoints_base.slice();
-    let best_skillpoints = [0, 0, 0, 0, 0];
-    let best_total = Infinity;
-    // Track if we have found a solution that satisfies hard constraints.
-    // Initializing to False allows a sequence of solutions to be found that do not
-    //     satisfy it, but if any solution does satisfy it (even with higher total)
-    //     then we will accept that one instead.
-    // TODO: Do we want to handle guild tome bonuses? (best under 103/(102+102)/(101*5)?)
-    // For now, nah. Let the user apply the guild tome if they really care about optimality
-    // Though really the guild tome might be part of the optimization problem...
-    let best_under_100 = false;
-    let best_activeSetCounts = static_activeSetCounts;
-
-    let allFalse = [0, 0, 0, 0, 0];
-    if (consider.length > 0 || noboost.length > 0 || negative_only.length > 0 || crafted.length > 0) {
-        // Try every combination and pick the best one.
-        const [root, terminal, sccs] = construct_scc_graph(consider);
-        const end_checks = crafted.concat(noboost);
-        end_checks.push(weapon);
-
-        function check_end(skillpoints_applied, skillpoints, activeSetCounts, skillpoint_min, total_applied) {
-            // Crafted skillpoint does not count initially.
-            for (const item of negative_only) {
-                const needed_skillpoints = apply_to_fit(skillpoints, item,
-                        skillpoint_min, activeSetCounts);
-                apply_skillpoints(skillpoints, item);
-
-                for (let i = 0; i < 5; ++i) {
-                    const skp = needed_skillpoints[i]
-                    skillpoints_applied[i] += skp;
-                    skillpoints[i] += skp;
-                    total_applied += skp;
-                }
-            }
-            for (const item of end_checks) {
-                const needed_skillpoints = apply_to_fit(skillpoints, item,
-                        [false, false, false, false, false], activeSetCounts);
-
-                for (let i = 0; i < 5; ++i) {
-                    const skp = needed_skillpoints[i]
-                    skillpoints_applied[i] += skp;
-                    skillpoints[i] += skp;
-                    total_applied += skp;
-                }
-            }
-            return total_applied;
-        }
-        
-        function check_under_100(skillpoints) {
-            for (let i = 0; i < 5; ++i) {
-                if (skillpoints[i] > 100) {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        function permute_check(idx, _applied, _skillpoints, _sets, _has, _total_applied, order) {
-            const {nodes, children} = sccs[idx];
-            if (nodes[0] === terminal) {
-                const total = check_end(_applied, _skillpoints, _sets, _has, _total_applied);
-
-                const soln_under_100 = check_under_100(_applied);
-                if (best_under_100 && !soln_under_100) {
-                    // Reject solution if the current best solution satisfies hard constraints.
-                    return;
-                }
-                
-                if (total < best_total || (soln_under_100 & !best_under_100)) {
-                    final_skillpoints = _skillpoints;
-                    best_skillpoints = _applied;
-                    best_total = total;
-                    best_activeSetCounts = _sets;
-                    best = order;
-                    best_under_100 = soln_under_100;
-                }
-                return;
-            }
-            for (let permutation of perm(nodes)) {
-                const skillpoints_applied = _applied.slice();
-                const skillpoints = _skillpoints.slice();
-                const activeSetCounts = new Map(_sets);
-                const has_skillpoint = _has.slice();
-                let total_applied = _total_applied;
-                let short_circuit = false;
-                for (const {item} of permutation) {
-                    needed_skillpoints = apply_to_fit(skillpoints, item, has_skillpoint, activeSetCounts);
-                    for (let i = 0; i < 5; ++i) {
-                        skp = needed_skillpoints[i];
-                        skillpoints_applied[i] += skp;
-                        skillpoints[i] += skp;
-                        total_applied += skp;
-                    }
-                    // Yay for convex objective
-                    if (best_under_100) {
-                        if (total_applied >= best_total) {
-                            short_circuit = true;
-                            break;  // short circuit failure
-                        }
-                    }
-                    else {
-                        const soln_under_100 = check_under_100(skillpoints_applied);
-                        if (!soln_under_100 && total_applied >= best_total) {
-                            short_circuit = true;
-                            break;  // short circuit failure
-                        }
-                    }
-                    apply_skillpoints(skillpoints, item);
-                }
-                if (short_circuit) { continue; }
-                permute_check(idx+1, skillpoints_applied, skillpoints, activeSetCounts, has_skillpoint, total_applied, order.concat(permutation.map(x => x.item)));
-            }
-        }
-        if (sccs.length === 1) {
-            // Only crafteds. Just do end check (check req first, then apply sp after)
-            const total = check_end(best_skillpoints, final_skillpoints, best_activeSetCounts, allFalse.slice());
-            best_total = total;
-            best_activeSetCounts = best_activeSetCounts;
-            best = [];
-        } else {
-            // skip root.
-            permute_check(1, best_skillpoints, final_skillpoints, best_activeSetCounts, allFalse.slice(), 0, []);
-        }
-    }
-    else {
-        best_total = 0;
-        needed_skillpoints = apply_to_fit(final_skillpoints, weapon, allFalse.slice(), best_activeSetCounts);
-        for (let i = 0; i < 5; ++i) {
-            const skp = needed_skillpoints[i];
-            best_skillpoints[i] += skp;
-            final_skillpoints[i] += skp;
-            best_total += skp;
-        }
-    }
-    for (const item of crafted) {
-        apply_skillpoints(final_skillpoints, item);
-    }
-    apply_skillpoints(final_skillpoints, weapon);
-
-    // Aggregate bonus skill points for radiance calculation
-    let total_item_skillpoints = [0, 0, 0, 0, 0];
-    for (const item of equipment.concat([weapon])) {
-        if (weapon && item.set) {
-            apply_set(item.set, best_activeSetCounts);
-        }
-        for (const i in skp_order) {
-            total_item_skillpoints[i] += item.skillpoints[i];
-        }
-    }
-    // Apply set skillpoints last as well.
-    for (const [set_name, count] of best_activeSetCounts) {
-        const bonus = sets.get(set_name).bonuses[count-1];
-        for (const i in skp_order) {
-            const delta = (bonus[skp_order[i]] || 0);
-            final_skillpoints[i] += delta;
-            total_item_skillpoints[i] += delta;
-        }
-    }
-
-    let equip_order = fixed.concat(best).concat(noboost).concat(negative_only).concat(crafted);
-    console.log(best_activeSetCounts);
-    // best_skillpoints:        manually assigned (before any gear)
-    // final_skillpoints:       final totals (5 individ)
-    // best_total:              total skillpoints assigned (number)
-    // total_item_skillpoints:  contribution by item/set bonuses. Used for radiance calculations
-    // const end = performance.now();
-    // const output_msg = `skillpoint calculation took ${(end-start)/ 1000} seconds.`;
-    // console.log(output_msg);
-    return [equip_order, best_skillpoints, final_skillpoints, best_total, best_activeSetCounts, total_item_skillpoints];
-}
-
-function construct_scc_graph(items_to_consider) {
-    let nodes = [];
-    let terminal_node = {
-        item: null,
-        children: [],
-        parents: nodes
-    };
-    let root_node = {
-        item: null,
-        children: nodes,
-        parents: [],
-    };
-    for (const item of items_to_consider) {
-        const set_neg = [false, false, false, false, false];
-        const set_pos = [false, false, false, false, false];
-        const set_name = item.set;
-        if (set_name) {
-            const bonuses = sets.get(set_name).bonuses;
-            for (const bonus of bonuses) {
-                for (const i in skp_order) {
-                    if (bonus[skp_order[i]] > 0) { set_pos[i] = true; }
-                    if (bonus[skp_order[i]] < 0) { set_neg[i] = true; }
-                }
-            }
-        }
-        nodes.push({item: item, children: [terminal_node], parents: [root_node], set_pos: set_pos, set_neg: set_neg});
-    }
-    // Dependency graph construction.
-    for (const node_a of nodes) {
-        const {item: a, children: a_children, set_pos: a_set_pos} = node_a;
-        for (const node_b of nodes) {
-            const {item: b, parents: b_parents, set_neg: b_set_neg} = node_b;
-
-            const setName = b.set;
-
-            for (let i = 0; i < 5; ++i) {
-                if ((a.skillpoints[i] > 0 || a_set_pos[i] > 0)
-                        && (a.reqs[i] < b.reqs[i] || b.skillpoints[i] < 0 || b_set_neg[i] < 0)) {
-                    a_children.push(node_b);
-                    b_parents.push(node_a);
-                    break;
-                }
-            }
-        }
-    }
-    const sccs = make_SCC_graph(root_node, nodes);
-    return [root_node, terminal_node, sccs];
+    const name = item.get("set");
+    if (name && !item.has("NONE"))
+      activeSets.set(name, (activeSets.get(name) || 0) + 1);
+  }
+  for (const [name, count] of activeSets) {
+    const tiers = sets.get(name)?.bonuses;
+    const bonus = tiers?.[Math.min(count, tiers.length) - 1] || {};
+    for (let i = 0; i < 5; i++) itemSkills[i] += bonus[skp_order[i]] || 0;
+  }
+  const totals = assigned.map((points, i) => points + itemSkills[i]);
+  return [
+    equipment.slice(),
+    assigned,
+    totals,
+    assigned.reduce((a, b) => a + b, 0),
+    activeSets,
+    itemSkills,
+  ];
 }

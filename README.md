@@ -1,4 +1,9 @@
 # WynnBuilder
+
+This fork adds a native build optimizer with stat targets, owned-item rolls and mandatory complete-loadout skill validation. Run `pnpm dev` and open `http://127.0.0.1:8000/builder/`.
+
+[Optimizer usage, static build, validity rules and tests](OPTIMIZER.md)
+
 Wynncraft class building calculator & general utility site
 
 ![Builder Screenshot](https://user-images.githubusercontent.com/110062564/192047798-d8583fe1-b188-4bc4-85a9-0eecbf10aeef.PNG)
