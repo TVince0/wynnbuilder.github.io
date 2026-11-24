@@ -262,11 +262,7 @@ let wynn_version_id = WYNN_VERSION_LATEST; // Required for copy url...
 let MAJOR_IDS = null;
 
 async function load_major_id_data(version_str) {
-    let getUrl = window.location;
-    let baseUrl = `${getUrl.protocol}//${getUrl.host}/`;
-    // No random string -- we want to use caching
-    let url = `${baseUrl}/data/${version_str}/majid.json`;
-    MAJOR_IDS = await (await fetch(url)).json();
+    MAJOR_IDS = await Loader.load_json(`data/${version_str}/majid`);
     console.log("Loaded major id data");
 }
 
@@ -274,16 +270,9 @@ let ENC = null;
 let DEC = null
 
 async function load_encoding_constants(version_str, decoding_version_str) {
-    let getUrl = window.location;
-    let baseUrl = `${getUrl.protocol}//${getUrl.host}/`;
-    // No random string -- we want to use caching
-    let encoding_url = `${baseUrl}/data/${version_str}/encoding_consts.json`;
-    let decoding_url = `${baseUrl}/data/${decoding_version_str}/encoding_consts.json`;
-    ENC = await (await fetch(encoding_url)).json();
-    if (decoding_version_str !== undefined && decoding_version_str != version_str) {
-       DEC = await (await fetch(decoding_url)).json(); 
-    } else {
-        DEC = ENC;
-    }
+    ENC = await Loader.load_json(`data/${version_str}/encoding_consts`);
+    DEC = decoding_version_str !== undefined && decoding_version_str !== version_str
+        ? await Loader.load_json(`data/${decoding_version_str}/encoding_consts`)
+        : ENC;
     console.log("Loaded encoding data");
 }

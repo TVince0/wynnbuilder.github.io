@@ -13,7 +13,7 @@ const types = {
   ".woff2": "font/woff2",
   ".webp": "image/webp",
 };
-http
+const server = http
   .createServer((req, res) => {
     try {
       const url = new URL(req.url, "http://localhost");
@@ -35,6 +35,6 @@ http
   })
   .listen(port, "127.0.0.1", () =>
     console.log(
-      "WynnBuilder with optimizer: http://127.0.0.1:" + port + "/builder/",
+      "WynnBuilder with optimizer: http://127.0.0.1:" + server.address().port + "/builder/",
     ),
   );

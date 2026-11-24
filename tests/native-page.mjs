@@ -1,33 +1,57 @@
 import { Window } from "happy-dom";
 import * as idb from "fake-indexeddb";
 import vm from "node:vm";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 const project = fileURLToPath(new URL("..", import.meta.url));
-const root = process.argv[2] ? path.resolve(process.argv[2]) : project,
-  address = "http://localhost:8000/builder/";
-const win = new Window({
-  url: address,
-  settings: {
-    disableCSSFileLoading: true,
-    disableJavaScriptFileLoading: true,
-    disableIframePageLoading: true,
-    disableJavaScriptEvaluation: true,
-  },
+const root = process.argv[2] ? path.resolve(process.argv[2]) : project;
+const server = spawn(process.execPath, [path.join(project, "scripts/serve.mjs"), root], {
+  env: { ...process.env, PORT: "0" },
+  stdio: ["ignore", "pipe", "inherit"],
 });
-for (const [key, value] of Object.entries(idb))
-  if (key !== "default") win[key] = value;
-win.structuredClone = structuredClone;
-win.fetch = async function (input) {
-  const url = new URL(input?.url ?? input, address);
-  let file = path.join(root, url.pathname);
-  return new win.Response(fs.readFileSync(file, "utf8"), {
-    status: 200,
-    headers: { "content-type": "application/json" },
+process.on("exit", () => server.kill());
+const [ready] = await Promise.race([
+  once(server.stdout, "data"),
+  once(server, "exit").then(([code]) => { throw Error("Server exited with code " + code); }),
+]);
+const address = String(ready).match(/http:\/\/[^\s]+/)[0];
+function createWindow(url) {
+  const window = new Window({
+    url,
+    settings: {
+      disableCSSFileLoading: true,
+      disableJavaScriptFileLoading: true,
+      disableIframePageLoading: true,
+      disableJavaScriptEvaluation: true,
+    },
   });
-};
+  for (const [key, value] of Object.entries(idb))
+    if (key !== "default") window[key] = value;
+  window.structuredClone = structuredClone;
+  window.Worker = WorkerShim;
+  window.fetch = (input, options) => fetch(new URL(input?.url ?? input, url), options);
+  window.HTMLElement.prototype.scrollIntoView = function () {};
+  return window;
+}
+async function openBuilder(window) {
+  const page = await fetch(window.location.href);
+  assert.equal(page.status, 200);
+  window.document.write(await page.text());
+  for (const script of window.document.querySelectorAll("script")) {
+    let source = script.textContent;
+    if (script.src) {
+      const response = await fetch(script.src);
+      assert.equal(response.status, 200, script.src);
+      assert.match(response.headers.get("content-type"), /javascript/, script.src);
+      source = await response.text();
+    }
+    vm.runInContext(source, window, { filename: script.src || "inline" });
+  }
+}
 class WorkerShim {
   constructor(url) {
     const location = new URL(url, address),
@@ -61,24 +85,14 @@ class WorkerShim {
   }
   terminate() {}
 }
-win.Worker = WorkerShim;
-win.HTMLElement.prototype.scrollIntoView = function () {};
+const win = createWindow(address);
 win.HTMLDialogElement.prototype.showModal = function () {
   this.setAttribute("open", "");
 };
 win.HTMLDialogElement.prototype.close = function () {
   this.removeAttribute("open");
 };
-win.document.write(fs.readFileSync(root + "/builder/index.html", "utf8"));
-for (const script of win.document.querySelectorAll("script")) {
-  const file =
-    script.src && path.join(root, new URL(script.src, address).pathname);
-  vm.runInContext(
-    file ? fs.readFileSync(file, "utf8") : script.textContent,
-    win,
-    { filename: file || "inline" },
-  );
-}
+await openBuilder(win);
 const doc = win.document;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const wait = async (fn, message) => {
@@ -228,37 +242,8 @@ assert.equal(
 );
 
 // Reopen the actual native share URL in a fresh document and compute graph.
-const reloaded = new Window({
-  url: win.location.href,
-  settings: {
-    disableCSSFileLoading: true,
-    disableJavaScriptFileLoading: true,
-    disableIframePageLoading: true,
-    disableJavaScriptEvaluation: true,
-  },
-});
-for (const [key, value] of Object.entries(idb))
-  if (key !== "default") reloaded[key] = value;
-reloaded.structuredClone = structuredClone;
-reloaded.Worker = WorkerShim;
-reloaded.fetch = async function (input) {
-  const url = new URL(input?.url ?? input, address);
-  return new reloaded.Response(
-    fs.readFileSync(path.join(root, url.pathname), "utf8"),
-    { status: 200, headers: { "content-type": "application/json" } },
-  );
-};
-reloaded.HTMLElement.prototype.scrollIntoView = function () {};
-reloaded.document.write(fs.readFileSync(root + "/builder/index.html", "utf8"));
-for (const script of reloaded.document.querySelectorAll("script")) {
-  const file =
-    script.src && path.join(root, new URL(script.src, address).pathname);
-  vm.runInContext(
-    file ? fs.readFileSync(file, "utf8") : script.textContent,
-    reloaded,
-    { filename: file || "inline" },
-  );
-}
+const reloaded = createWindow(win.location.href);
+await openBuilder(reloaded);
 await wait(
   () => reloaded.document.getElementById("optimizer-run"),
   "share reload",
@@ -294,7 +279,24 @@ assert.match(
 vm.runInContext("resetFields()", win);
 assert.equal(doc.querySelectorAll(".optimizer-pin input:checked").length, 0);
 assert.ok(!win.location.search.includes("optimizer="));
+// A missing startup file must replace the loading message on either cache path.
+for (const [suffix, fresh] of [["/atree.json", false], ["/compress.json", true]]) {
+  const failed = createWindow(address);
+  if (fresh) failed.indexedDB = new idb.IDBFactory();
+  const read = failed.fetch;
+  failed.fetch = (input, options) => read(
+    input.endsWith(suffix) ? new URL("/missing-test-data.json", address).href : input,
+    options,
+  );
+  await openBuilder(failed);
+  await wait(() => {
+    const message = failed.document.getElementById("build-optimizer").textContent;
+    return message.includes(suffix) && message.includes("HTTP 404");
+  }, "missing data should identify the failed file on the page: " + suffix);
+  await failed.happyDOM.close();
+}
 console.log(
   "PASS native and built page, search/apply, guild validity, zero rolls, share reload, JSON import and reset",
 );
 await win.happyDOM.close();
+server.kill();

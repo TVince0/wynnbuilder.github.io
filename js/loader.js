@@ -17,7 +17,7 @@
 class Loader {
     constructor(db_name, store_names, db_version) {
         this.db = null;
-        this.in_progress = false;
+        this.pending = null;
         this.complete = false;
         this.reload = false;
         this.db_name = db_name;
@@ -35,10 +35,13 @@ class Loader {
             let tsx = this.write_transaction();
             this.process_remote(data, tsx, reject);
             tsx.oncomplete = () => {
-                this.init_maps();
-                this.complete = true;
-                this.db.close();
-                resolve();
+                try {
+                    this.init_maps();
+                    this.complete = true;
+                    resolve();
+                } catch (error) {
+                    reject(error);
+                }
             }
         });
     }
@@ -59,7 +62,6 @@ class Loader {
                     return;
                 }
                 this.complete = true;
-                this.db.close();
                 resolve();
             }
         });
@@ -79,7 +81,6 @@ class Loader {
             paths = `data/${version_str}/${paths}`;
         }
         const data = await Loader.load_json(paths);
-        this.in_progress = true;
         this.process_old_version(data);
         this.init_maps();
         this.complete = true;
@@ -97,23 +98,20 @@ class Loader {
      * @returns Promise<JSON | JSON[]>
      */
     static async load_json(paths, cache_mode='default') {
-        const protocol = window.location.protocol;
-        const host = window.location.host;
-        const base_url = `${protocol}//${host}`
-
-        if (typeof paths === "string") {
-            let url = `${base_url}/${paths}.json`;
-            return (await fetch(url, {cache: cache_mode})).json()
-        } else if ([Symbol.iterator in paths]) {
-            let promises = [];
-            for (const path of paths) {
-                let url = `${base_url}/${path}.json`;
-                promises.push(await fetch(url, {cache: cache_mode}));
+        async function read(path) {
+            const url = new URL(`/${path}.json`, window.location.origin);
+            const response = await fetch(url.href, {cache: cache_mode});
+            if (!response.ok) {
+                throw new Error(`Could not load ${url.pathname} (HTTP ${response.status}).`);
             }
-            return Promise.all(promises.map(promise => promise.json()));
-        } else {
-            throw new TypeError("`Argument` must be an iterable or string.")
+            try {
+                return await response.json();
+            } catch (cause) {
+                throw new Error(`Could not read JSON from ${url.pathname}.`, {cause});
+            }
         }
+        if (typeof paths === "string") return read(paths);
+        return Promise.all([...paths].map(read));
     }
 
     /**
@@ -136,59 +134,46 @@ class Loader {
      * Upgrades the linked database in case of a version change, then reads the data into memory.
      */
     async load_init() {
+        if (this.complete) return;
+        if (!this.pending) {
+            this.pending = this.load_database().finally(() => { this.pending = null; });
+        }
+        return this.pending;
+    }
+
+    async load_database() {
+        this.db = await this.open_database();
+        try {
+            if (this.reload) {
+                console.log(`Populating ${this.db_name} and loading the new data...`);
+            } else {
+                console.log(`Using existing ${this.db_name} data...`);
+                try {
+                    await this.load_local();
+                    return;
+                } catch (error) {
+                    console.warn(`${this.db_name} appears corrupt, reloading from remote...`, error);
+                    this.db.close();
+                    await new Promise((resolve, reject) => {
+                        const request = indexedDB.deleteDatabase(this.db_name);
+                        request.onsuccess = resolve;
+                        request.onerror = () => reject(request.error);
+                    });
+                    this.db = await this.open_database();
+                }
+            }
+            await this.load();
+        } finally {
+            this.db.close();
+        }
+    }
+
+    open_database() {
+        this.reload = false;
         return new Promise((resolve, reject) => {
-            let request = window.indexedDB.open(this.db_name, this.db_version);
-
-            request.onerror = () => {
-                console.error("DB failed to open:", request.error, " | name: ", this.db_name , " | version: ",this.db_version);
-                reject("DB failed to open...");
-            };
-
-            request.onsuccess = async (event) => {
-                this.db = event.target.result;
-                if (this.in_progress) {
-                    while (!this.complete) {
-                        await sleep(100);
-                    }
-                    console.log("Skipping load...")
-                }
-                else {
-                    this.in_progress = true;
-                    if (this.reload) {
-                        console.log(`Populating ${this.db_name} and loading the new data...`)
-                        await this.load();
-                    }
-                    else {
-                        console.log(`Using existing ${this.db_name} data...`)
-                        try {
-                            await this.load_local();
-                        } catch (e) {
-                            console.warn(`${this.db_name} appears corrupt, reloading from remote...`, e);
-                            this.db.close();
-                            await new Promise((res, rej) => {
-                                let del = indexedDB.deleteDatabase(this.db_name);
-                                del.onsuccess = res;
-                                del.onerror = () => rej("Failed to delete corrupt DB");
-                            });
-                            let req2 = indexedDB.open(this.db_name, this.db_version);
-                            req2.onupgradeneeded = (event) => {
-                                let db = event.target.result;
-                                for (const store_name of this.store_names) {
-                                    db.createObjectStore(store_name);
-                                }
-                            };
-                            await new Promise((res, rej) => { 
-                                req2.onsuccess = res; 
-                                req2.onerror = () => rej("Failed to reopen DB after corruption");
-                            });
-                            this.db = req2.result;
-                            await this.load();
-                        }
-                    }
-                }
-                resolve();
-            };
-
+            const request = window.indexedDB.open(this.db_name, this.db_version);
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => resolve(request.result);
             request.onupgradeneeded = (event) => {
                 this.reload = true;
 

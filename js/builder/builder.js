@@ -496,6 +496,11 @@ window.onerror = function(message, source, lineno, colno, error) {
     document.getElementById('stack-box').textContent = error.stack;
 };
 
-(async function() {
-    await init();
-})();
+init().catch(error => {
+    console.error("WynnBuilder startup failed", error);
+    const message = `WynnBuilder could not start. ${error?.message ?? error}`;
+    for (const id of ["build-optimizer", "err-box"]) {
+        const element = document.getElementById(id);
+        if (element) element.textContent = message;
+    }
+});
