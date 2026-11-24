@@ -57,6 +57,7 @@ async function openBuilder(window) {
     vm.runInContext(source, window, { filename: script.src || "inline" });
   }
 }
+let lastRequest;
 class WorkerShim {
   constructor(url) {
     const location = new URL(url, address),
@@ -85,6 +86,7 @@ class WorkerShim {
     this.ctx = ctx;
   }
   postMessage(data) {
+    if (data.pools) lastRequest = structuredClone(data);
     setTimeout(
       () => this.ctx.self.onmessage({ data: structuredClone(data) }),
       1,
@@ -120,6 +122,9 @@ await wait(
   "optimizer did not mount",
 );
 assert.match(doc.getElementById("optimizer-count").textContent, /5,5/);
+assert.equal(doc.getElementById("optimizer-strategy").value, "cuda");
+doc.getElementById("optimizer-strategy").value = "exhaustive";
+doc.getElementById("optimizer-strategy").dispatchEvent(new win.Event("change", {bubbles:true}));
 assert.ok(doc.getElementById("optimizer-lock-helmet").disabled);
 doc.getElementById("optimizer-edit-helmet").click();
 assert.equal(doc.activeElement, doc.getElementById("helmet-choice"));
@@ -324,6 +329,8 @@ assert.equal(
   withGuild.health,
 );
 
+const expectedCudaScore = vm.runInContext("OptimizerFinal.measurements(build_node.get_value(), OptimizerFinal.snapshot())", win)[lastRequest.config.objective];
+
 // Reopen the actual native share URL in a fresh document and compute graph.
 const reloaded = createWindow(win.location.href);
 await openBuilder(reloaded);
@@ -378,6 +385,52 @@ for (const [suffix, fresh] of [["/atree.json", false], ["/compress.json", true]]
   }, "missing data should identify the failed file on the page: " + suffix);
   await failed.happyDOM.close();
 }
+// Exercise the real local service and native validation using a protocol-only GPU test double.
+// Kernel compilation and shared C++ formula tests are separate from this transport test.
+const cudaTemp = fs.mkdtempSync(path.join(project, ".cuda-test-"));
+const protocol = path.join(cudaTemp, "protocol.py");
+fs.writeFileSync(protocol, [
+  "import sys,json,time",
+  "def emit(value): print(json.dumps(value),flush=True)",
+  "if '--probe' in sys.argv:",
+  " emit({'available':True,'device':'Protocol test device'});sys.exit(0)",
+  "request=json.loads(sys.stdin.readline())",
+  "emit({'ready':True,'device':'Protocol test device'})",
+  "for line in sys.stdin:",
+  " json.loads(line);time.sleep(.02)",
+  " emit({'tested':4096,'feasible':1,'candidates':[request['offsets']]})",
+].join("\n"));
+const cudaServer = spawn(process.execPath,[path.join(project,"scripts/serve.mjs"),root],{
+  env:{...process.env,PORT:"0",WYNN_CUDA_WORKER_SCRIPT:protocol},stdio:["ignore","pipe","inherit"],
+});
+try {
+  const [ready] = await once(cudaServer.stdout,"data");
+  const origin = new URL(String(ready).match(/http:\/\/[^\s]+/)[0]).origin;
+  const status = await (await fetch(origin+"/api/cuda/status")).json();
+  assert.equal(status.device,"Protocol test device");
+  const encode=(_key,value)=>value instanceof Map?{__wynnType:"Map",value:[...value]}:value instanceof Set?{__wynnType:"Set",value:[...value]}:value;
+  const request=structuredClone(lastRequest);
+  Object.assign(request.config,{strategy:"cuda",seconds:1,workers:2,cudaBlocks:16});
+  const body=JSON.stringify(request,encode);
+  const send=(signal)=>fetch(origin+"/api/cuda/search",{method:"POST",headers:{"Content-Type":"application/json"},body,signal});
+  assert.equal((await fetch(origin+"/api/cuda/search",{method:"POST",headers:{Origin:"https://other.example"},body})).status,403);
+  assert.equal((await fetch(origin+"/api/cuda/search",{method:"POST",body:"{}"})).status,400);
+  const controller = new AbortController();
+  const interrupted = await send(controller.signal);
+  assert.equal(interrupted.status,200);
+  assert.equal((await send()).status,409);
+  controller.abort();
+  await sleep(250);
+  const completed=await send();
+  assert.equal(completed.status,200);
+  const events=(await completed.text()).trim().split("\n").map(line=>JSON.parse(line));
+  assert.ok(!events.some(event=>event.error),JSON.stringify(events));
+  const result=events.find(event=>event.result)?.result;
+  assert.ok(result?.cuda);
+  assert.ok(result.builds.length);
+  assert.ok(Math.abs(result.builds[0].score-expectedCudaScore)<1e-7,"backend score must equal the native page");
+  console.log("PASS CUDA service protocol, native validation parity, origin checks, busy handling and cancellation (test GPU process)");
+} finally {cudaServer.kill();fs.rmSync(cudaTemp,{recursive:true,force:true});}
 console.log(
   "PASS native and built page, search/apply, guild validity, zero rolls, share reload, JSON import and reset",
 );

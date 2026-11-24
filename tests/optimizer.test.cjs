@@ -310,3 +310,59 @@ test('parallel search merges tie breakers, waits for all workers, and ignores ca
   `);
   assert.deepEqual(JSON.parse(JSON.stringify(result)), [false,['b','c'],'18',true,true]);
 });
+
+
+test('host compilation of the shared CUDA skill filter agrees with native net allocations', t => {
+  const {spawnSync} = require('node:child_process');
+  if (spawnSync('g++',['--version']).error) {t.skip('g++ is required for the shared CUDA formula test');return;}
+  const directory = fs.mkdtempSync(path.join(root,'.cuda-test-'));
+  try {
+    const source = path.join(directory,'filter.cpp'), binary = path.join(directory,'filter');
+    fs.writeFileSync(source, `
+      #include <cmath>
+      #include <iostream>
+      using std::isfinite;
+      #define __device__
+      #define WYNN_HOST_TEST
+      #include "${path.join(root,'backend/search.cu')}"
+      int main() {
+        int cases;std::cin>>cases;
+        while(cases--) {
+          double rows[9*32],base[47],score;int indices[9];
+          for(auto &x:rows)std::cin>>x;
+          for(auto &x:base)std::cin>>x;
+          for(int i=0;i<9;i++)indices[i]=i;
+          std::cout<<evaluate_candidate(rows,indices,base,200,2,1,score)<<" ";
+        }
+      }
+    `);
+    const compiled = spawnSync('g++',['-std=c++14','-O2',source,'-o',binary],{encoding:'utf8'});
+    assert.equal(compiled.status,0,compiled.stderr);
+    const c=context();
+    vm.runInContext(fs.readFileSync(path.join(root,'backend/native_search.js'),'utf8'),c.ctx);
+    const cases=c.eval(`(() => {
+      let seed=1729;
+      const random=n=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed%n;};
+      return Array.from({length:200},(_,index)=>{
+        const items=emptyEquipment().concat([weapon()]);
+        for(const item of items) {
+          const bonus=Array.from({length:5},()=>random(90)-30);
+          const reqs=Array.from({length:5},()=>random(170));
+          item.statMap.set('skillpoints',bonus);item.statMap.set('reqs',reqs);
+          item.statMap.set('crafted',random(5)===0);
+        }
+        const guild=fixture('guildTome','guild',{str:12,int:-3,strReq:index%4?0:100});
+        const tomes=[guild];
+        const config={level:106,objective:'health',direction:'max',duplicateRings:true};
+        const pools=items.map(item=>[{key:item.statMap.get('name'),item}]);
+        const payload=OptimizerCuda.pack({pools,tomes,config});
+        const allocation=calculate_skillpoints(items.slice(0,8).concat(tomes).map(item=>item.statMap),items[8].statMap);
+        return {payload,valid:allocation[3]<=200&&allocation[1].every(value=>value<=100)};
+      });
+    })()`);
+    const input=cases.length+' '+cases.map(entry=>entry.payload.items.flat().concat(entry.payload.base).join(' ')).join(' ');
+    const run=spawnSync(binary,[],{input,encoding:'utf8'});
+    assert.equal(run.status,0,run.stderr);
+    assert.deepEqual(run.stdout.trim().split(/\s+/).map(value=>value==='1'),Array.from(cases,entry=>entry.valid));
+  } finally {fs.rmSync(directory,{recursive:true,force:true});}
+});

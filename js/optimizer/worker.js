@@ -21,30 +21,42 @@ importScripts(
 );
 // Native Build's data dependency. The page sends its currently loaded version.
 let sets = new Map();
-let MAJOR_IDS = {}, player_build;
+let MAJOR_IDS = {},
+  player_build;
 COMPUTE_GRAPH_DEBUG = false;
+function prepareOptimizerRequest(data) {
+  sets = new Map(data.sets);
+  const context = data.config.finalContext;
+  if (context) {
+    MAJOR_IDS = context.majorIds;
+    workerElements.clear();
+    for (const [id, value] of Object.entries(context.elements))
+      workerElements.set(id, workerElement(value));
+    armor_powder_node.value = armor_powder_node.compute_func(new Map());
+    boosts_node.value = boosts_node.compute_func(new Map());
+    powder_special_input.value = context.powders;
+  }
+  const pools = data.pools.map((pool) =>
+    pool.map((entry) => ({
+      ...entry,
+      item: OptimizerModel.fromMap(entry.map),
+    })),
+  );
+  const tomes = data.tomes.map(OptimizerModel.fromMap);
+  return { pools, tomes, config: data.config };
+}
 const migrants = [];
 self.onmessage = async ({ data }) => {
-  if (data.type === "migrate") { migrants.push(...data.builds); return; }
+  if (data.type === "migrate") {
+    migrants.push(...data.builds);
+    return;
+  }
   try {
-    sets = new Map(data.sets);
-    const context = data.config.finalContext;
-    if (context) {
-      MAJOR_IDS = context.majorIds;
-      workerElements.clear();
-      for (const [id, value] of Object.entries(context.elements)) workerElements.set(id, workerElement(value));
-      armor_powder_node.value = armor_powder_node.compute_func(new Map());
-      boosts_node.value = boosts_node.compute_func(new Map());
-      powder_special_input.value = context.powders;
-    }
-    const pools = data.pools.map((pool) =>
-      pool.map((entry) => ({
-        ...entry,
-        item: OptimizerModel.fromMap(entry.map),
-      })),
-    );
-    const tomes = data.tomes.map(OptimizerModel.fromMap);
-    const search = data.config.strategy === "fast" ? OptimizerFast.search : OptimizerSearch.search;
+    const { pools, tomes } = prepareOptimizerRequest(data);
+    const search =
+      data.config.strategy === "fast"
+        ? OptimizerFast.search
+        : OptimizerSearch.search;
     const result = await search(
       pools,
       tomes,

@@ -40,6 +40,8 @@ const BuildOptimizer = (() => {
   function persist() {
     const value = {
       mode,
+      cudaConfigured: true,
+      cudaBlocks: document.getElementById("optimizer-cuda-blocks").value,
       strategy: document.getElementById("optimizer-strategy").value,
       seconds: document.getElementById("optimizer-seconds").value,
       workers: document.getElementById("optimizer-workers").value,
@@ -324,8 +326,9 @@ const BuildOptimizer = (() => {
       throw new Error("Search time must be between 1 and 300 seconds.");
     if (!Number.isInteger(workers) || workers < 1 || workers > 8)
       throw new Error("Choose between 1 and 8 workers.");
+    const cudaBlocks = Number(document.getElementById("optimizer-cuda-blocks").value);
     return {
-      strategy, seconds, workers,
+      strategy, seconds, workers, cudaBlocks,
       rules,
       secondary: readSecondary(),
       finalContext: OptimizerFinal.snapshot(),
@@ -419,7 +422,7 @@ const BuildOptimizer = (() => {
         const name = equip_inputs[index].get_value()?.statMap.get("name");
         return pools[index].find(entry => entry.key === name)?.key || pools[index][0].key;
       });
-      worker = new OptimizerPool(
+      worker = config.strategy === "cuda" ? new OptimizerCudaClient() : new OptimizerPool(
         new URL(
           "worker.js",
           document.querySelector('script[src$="/optimizer/ui.js"]').src,
@@ -441,9 +444,11 @@ const BuildOptimizer = (() => {
       };
       worker.onmessage = ({ data }) => {
         if (data.progress) {
-          notice(data.progress.fast
-            ? count(data.progress.examined) + " candidates tried · " + count(data.progress.evaluated) + " fully evaluated · " + format(data.progress.elapsed) + "s / " + config.seconds + "s · " + data.progress.workers + " workers · best found so far"
-            : count(data.progress.examined) + " / " + count(data.progress.total) + " combinations considered · " + format(data.progress.elapsed) + "s · exhaustive search");
+          notice(data.progress.cuda
+            ? data.progress.message || data.progress.device + " · " + count(data.progress.tested) + " GPU candidates · " + count(data.progress.evaluated) + " native evaluations · " + format(data.progress.elapsed) + "s · best found so far"
+            : data.progress.fast
+              ? count(data.progress.examined) + " candidates tried · " + count(data.progress.evaluated) + " fully evaluated · " + format(data.progress.elapsed) + "s / " + config.seconds + "s · " + data.progress.workers + " workers · best found so far"
+              : count(data.progress.examined) + " / " + count(data.progress.total) + " combinations considered · " + format(data.progress.elapsed) + "s · exhaustive search");
           if (data.progress.builds) {
             results = data.progress.builds;
             renderResults(config);
@@ -457,7 +462,9 @@ const BuildOptimizer = (() => {
           cancel();
           results = data.result.builds;
           renderResults(config);
-          notice(data.result.fast
+          notice(data.result.cuda
+            ? results.length + " builds found · " + data.result.device + " · " + count(data.result.tested) + " GPU candidates · " + count(data.result.evaluated) + " native evaluations · " + format(data.result.elapsed) + "s · global optimum unproven"
+            : data.result.fast
             ? results.length + " builds found in " + format(data.result.elapsed) + "s · time budget reached · global optimum unproven"
             : results.length + " ranked builds · " + count(data.result.examined) + " combinations considered · exhaustive search complete");
         }
@@ -681,10 +688,13 @@ const BuildOptimizer = (() => {
               </div>
             </details>
             <div class="optimizer-controls optimizer-search-options">
-              <label>Search mode<select id="optimizer-strategy" class="optimizer-input"><option value="fast">Time-limited search</option><option value="exhaustive">Exhaustive search</option></select></label>
+              <label>Search mode<select id="optimizer-strategy" class="optimizer-input"><option value="cuda">CUDA backend</option><option value="fast">CPU time-limited search</option><option value="exhaustive">CPU exhaustive search</option></select></label>
               <label>Time budget (seconds)<input id="optimizer-seconds" class="optimizer-input" type="number" min="1" max="300" value="30"></label>
               <label>CPU workers<select id="optimizer-workers" class="optimizer-input"></select></label>
+              <label id="optimizer-cuda-batch-label">CUDA batch size<select id="optimizer-cuda-blocks" class="optimizer-input"><option value="16">4,096</option><option value="64">16,384</option><option value="256" selected>65,536</option><option value="1024">262,144</option><option value="4096">1,048,576</option></select></label>
             </div>
+            <button type="button" class="optimizer-button" id="optimizer-cuda-check">Check CUDA backend</button>
+            <p id="optimizer-cuda-status" class="optimizer-hint" role="status"></p>
             <p class="optimizer-hint" id="optimizer-search-help">Time-limited search improves builds until the budget ends. Every result is validated. Global optimality is unproven.</p>
           </section>
           <section class="optimizer-card">
@@ -718,7 +728,20 @@ const BuildOptimizer = (() => {
     const strategyInput = document.getElementById("optimizer-strategy");
     const secondsInput = document.getElementById("optimizer-seconds");
     const workersInput = document.getElementById("optimizer-workers");
-    strategyInput.value = saved.strategy === "exhaustive" ? "exhaustive" : "fast";
+    strategyInput.value = saved.cudaConfigured && ["cuda","fast","exhaustive"].includes(saved.strategy) ? saved.strategy : "cuda";
+    const cudaBlocksInput = document.getElementById("optimizer-cuda-blocks");
+    cudaBlocksInput.value = ["16","64","256","1024","4096"].includes(saved.cudaBlocks) ? saved.cudaBlocks : "256";
+    document.getElementById("optimizer-cuda-check").onclick = async () => {
+      const status = document.getElementById("optimizer-cuda-status");
+      status.textContent = "Checking NVIDIA driver and CUDA compiler…";
+      try {
+        const response = await fetch("/api/cuda/status");
+        if (!response.ok) throw Error("Local CUDA service is unavailable. Start the site with pnpm dev.");
+        const state = await response.json();
+        status.textContent = state.available ? "Ready · " + state.device : state.error;
+        status.classList.toggle("optimizer-error", !state.available);
+      } catch(error) {status.textContent = error.message;status.classList.add("optimizer-error");}
+    };
     secondsInput.value = saved.seconds || 30;
     for (let i = 1; i <= 8; i++) workersInput.append(element("option", {value: i}, String(i)));
     workersInput.value = String(Math.max(1, Math.min(8, Number(saved.workers) || Math.max(1, (navigator.hardwareConcurrency || 4) - 1))));
@@ -726,7 +749,13 @@ const BuildOptimizer = (() => {
       const exhaustive = strategyInput.value === "exhaustive";
       secondsInput.disabled = exhaustive;
       workersInput.disabled = exhaustive;
-      document.getElementById("optimizer-search-help").textContent = exhaustive
+      const cuda = strategyInput.value === "cuda";
+      document.getElementById("optimizer-cuda-batch-label").hidden = !cuda;
+      document.getElementById("optimizer-cuda-check").hidden = !cuda;
+      document.getElementById("optimizer-cuda-status").hidden = !cuda;
+      document.getElementById("optimizer-search-help").textContent = cuda
+        ? "CUDA generates and skill-filters batches. Native CPU validators score the shortlist against your final-stat targets and rankings. Search is approximate and stops at the time budget. Requires the local NVIDIA backend."
+        : exhaustive
         ? "Exhaustive search proves the best ranking when it finishes. Large item pools can take a very long time. Uses one worker."
         : "Time-limited search improves builds until the budget ends. Every result is validated. Global optimality is unproven. Pools of 256 combinations or fewer are completed exhaustively.";
     };

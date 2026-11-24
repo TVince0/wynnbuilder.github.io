@@ -1,6 +1,8 @@
 # WynnBuilder
 
-This fork adds a native build optimizer with stat targets, owned-item rolls and mandatory complete-loadout skill validation. Run `pnpm dev` and open `http://127.0.0.1:8000/builder/`.
+This fork adds a local CUDA search backend, final-stat targets, owned-item rolls and mandatory skill validation to WynnBuilder. Run `pnpm cuda:setup`, `pnpm cuda:check`, then `pnpm dev` and open `http://127.0.0.1:8000/builder/`. CUDA candidate batches are scored and validated by the native WynnBuilder calculator.
+
+[CUDA setup, architecture and tuning](backend/README.md)
 
 [Optimizer usage, static build, validity rules and tests](OPTIMIZER.md)
 

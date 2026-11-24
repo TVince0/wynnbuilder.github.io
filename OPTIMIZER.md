@@ -4,19 +4,17 @@ This fork extends the existing WynnBuilder page. Open `/builder/` and use its no
 
 ## Run locally
 
-Node.js 22 or newer is required for the development commands.
+The local CUDA backend requires Node.js 22+, Python 3.10+, and a CUDA-capable NVIDIA GPU with a compatible NVIDIA driver. Install its Python dependencies once, check the GPU/compiler, and start the site.
 
 ```sh
+pnpm cuda:setup
+pnpm cuda:check
 pnpm dev
 ```
 
-Open `http://127.0.0.1:8000/builder/`. The development server requires no installed packages. `npm run dev` runs the same command. You can also serve the repository root using Python.
+Open `http://127.0.0.1:8000/builder/`. Setup creates `backend/.venv` and installs NumPy and NVIDIA NVRTC. The backend compiles its CUDA kernel at runtime. See [CUDA setup and tuning](backend/README.md) for device/Python selection and the GPU/native calculation split.
 
-```sh
-python3 -m http.server 8000 --bind 127.0.0.1
-```
-
-To produce a static site, run `pnpm build`. It copies the site's routes, scripts, assets and every upstream data version into `dist`. Run `pnpm preview` to serve that directory. Host the contents of `dist` at the origin root, then open `/builder/`.
+`pnpm build` creates `dist`. `pnpm preview` serves that site with the same local CUDA API. Keep the repository's backend and scripts beside it. Serving only static files supports the explicit CPU search modes. The CUDA mode calls the local service and reports an error if it is unavailable.
 
 ## Search a loadout
 
@@ -54,13 +52,15 @@ The search uses the minimum valid skill allocation and leaves spare points unass
 
 Use **Secondary ranking** to add ordered tie breakers. The primary metric has priority, then the first secondary, then subsequent rows. Each can prefer highest or lowest. Secondary scores are displayed on result cards, and settings are remembered locally.
 
-The default **Time-limited search** runs for 30 seconds using up to eight CPU workers. Set a budget from 1 to 300 seconds and choose the worker count. Workers search independently, exchange their strongest builds and make one-piece and multi-piece changes. Near-feasible candidates stay available so a later piece can repair missing skill points or target stats. Returned builds always pass the native final calculations, level/class restrictions, complete-loadout skill requirements and every target. Results use the configured primary and secondary rankings.
+The default **CUDA backend** generates and skill-filters candidate batches on the GPU, then scores a shortlist with up to eight native CPU validators. It uses a fast item-stat proxy and random samples for shortlisting. Your selected final-stat targets, primary ranking and secondary rankings are applied by the native calculator. Its time budget starts after initialization. Every returned build is validated, and global optimality is unproven.
+
+The explicit **CPU time-limited search** runs for 30 seconds using up to eight CPU workers. Set a budget from 1 to 300 seconds and choose the worker count. Workers search independently, exchange their strongest builds and make one-piece and multi-piece changes. Near-feasible candidates stay available so a later piece can repair missing skill points or target stats. Returned builds always pass the native final calculations, level/class restrictions, complete-loadout skill requirements and every target. Results use the configured primary and secondary rankings.
 
 Time-limited results are the best found within the budget. They have no global optimality guarantee. Stop the search or apply a result at any time to retain the best builds found so far. Fewer workers can help if memory use or responsiveness becomes an issue. Candidate pools with at most 256 combinations finish exhaustively even in time-limited mode.
 
-Choose **Exhaustive search** for a full ranking proof over a restricted pool. This mode uses one worker and runs until completion or cancellation. Skill feasibility prunes branches using future equipment support. Bounds for full combat effects remain conservative, so unrestricted exhaustive runs can still take a very long time.
+Choose **CPU exhaustive search** for a full ranking proof over a restricted pool. This mode uses one worker and runs until completion or cancellation. Skill feasibility prunes branches using future equipment support. Bounds for full combat effects remain conservative, so unrestricted exhaustive runs can still take a very long time.
 
-Both modes cache ability structure by class and active major IDs within a search. Only spells needed by the targets or rankings are evaluated. Generic spell ranking skips individual spell damage calculations. The browser handles CPU parallelism and requires no additional local service.
+Both modes cache ability structure by class and active major IDs within a search. Only spells needed by the targets or rankings are evaluated. Generic spell ranking skips individual spell damage calculations. The CPU modes use browser Web Workers. CUDA mode uses the local backend and native Node worker threads.
 
 
 ## Candidate JSON

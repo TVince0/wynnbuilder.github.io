@@ -5,6 +5,9 @@
   "description": "Native WynnBuilder with a complete-loadout optimizer",
   "scripts": {
     "dev": "node scripts/serve.mjs",
+    "cuda:setup": "node backend/setup.mjs",
+    "cuda:check": "node backend/check.mjs",
+    "cuda:compile": "node backend/check.mjs --compile-only",
     "build": "node scripts/build-site.mjs",
     "preview": "node scripts/serve.mjs dist",
     "test": "node --test tests/*.test.cjs",

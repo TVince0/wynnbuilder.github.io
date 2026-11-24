@@ -1,6 +1,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { handleCuda, shutdownCuda } from "../backend/api.mjs";
 const root = path.resolve(process.argv[2] || ".");
 const port = Number(process.env.PORT || 8000);
 const types = {
@@ -14,8 +15,9 @@ const types = {
   ".webp": "image/webp",
 };
 const server = http
-  .createServer((req, res) => {
+  .createServer(async (req, res) => {
     try {
+      if (await handleCuda(req, res)) return;
       const url = new URL(req.url, "http://localhost");
       let file = path.resolve(root, "." + decodeURIComponent(url.pathname));
       if (!file.startsWith(root + path.sep) && file !== root) {
@@ -35,6 +37,16 @@ const server = http
   })
   .listen(port, "127.0.0.1", () =>
     console.log(
-      "WynnBuilder with optimizer: http://127.0.0.1:" + server.address().port + "/builder/",
+      "WynnBuilder with optimizer: http://127.0.0.1:" +
+        server.address().port +
+        "/builder/",
     ),
   );
+
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.once(signal, () => {
+    shutdownCuda();
+    server.closeAllConnections();
+    server.close();
+  });
+}

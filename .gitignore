@@ -18,3 +18,8 @@ __pycache__
 # Local development and generated static output
 node_modules/
 dist/
+
+backend/.venv/
+backend/.cuda-cache/
+
+.cuda-test-*/
