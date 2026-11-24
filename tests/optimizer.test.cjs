@@ -248,3 +248,17 @@ test("guild tome skill support requires its unlocked slot", () => {
     true,
   );
 });
+
+test('secondary rankings preserve primary ties through branch pruning and order multiple tie breakers', () => {
+  const c = context();
+  const result = c.eval(`
+    const pools = emptyEquipment().concat([weapon()]).map(item => [{key:item.statMap.get('name'),item}]);
+    pools[0] = [
+      fixture('helmet','a',{hp:100,mr:9}), fixture('helmet','b',{hp:100,mr:2}),
+      fixture('helmet','c',{hp:200,mr:8}), fixture('helmet','d',{hp:100,mr:1})
+    ].map(item => ({key:item.statMap.get('name'),item}));
+    const run = direction => OptimizerSearch.search(pools,[],{level:106,characterClass:'Mage',objective:'hprRaw',direction:'max',limit:2,duplicateRings:true,rules:[],secondary:[{stat:'health',direction},{stat:'mr',direction:'min'}]}).builds.map(build=>build.pieces[0].name);
+    [run('max'),run('min')];
+  `);
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), [['c','d'],['d','b']]);
+});

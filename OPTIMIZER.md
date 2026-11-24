@@ -50,6 +50,10 @@ Filtering and ranking use the native final calculation pipeline, including selec
 
 The search uses the minimum valid skill allocation and leaves spare points unassigned. Candidate equipment can activate its own major IDs. The selected tree, aspects and interactive settings apply to candidates of the current weapon class. Choosing a different class starts with its default attacks until you configure that class in the editor. Fixed item stats are read from the catalog and cannot be overridden by the roll editor or older share links.
 
+**Generic spell hit** combines raw and percentage damage into an average damage benchmark. It evaluates a 100% spell hit with the equipped weapon's existing elemental distribution and native attack-speed scaling, skill points, critical chance and shared buffs. It excludes individual spell conversions and part-specific multipliers. Actual spells with different conversions, hit counts or scaling can rank differently. Shared damage IDs are also available individually.
+
+Use **Secondary ranking** to add ordered tie breakers. The primary metric has priority, then the first secondary, then subsequent rows. Each can prefer highest or lowest. Secondary scores are displayed on result cards, and settings are remembered locally.
+
 Full final-stat evaluation runs in a background Worker. Skill feasibility still prunes branches using support from future equipment. Final combat stats use conservative bounds, so searches over the full database can take a long time. Lock equipment or import a smaller item pool to reduce combinations. A completed search retains the exact highest-ranked results for its configured model. Cancelling preserves the best results found so far.
 
 ## Candidate JSON

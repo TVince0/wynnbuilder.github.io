@@ -248,6 +248,26 @@ for (const [key, value] of Object.entries(parity.live)) {
   if (Number.isFinite(value)) assert.ok(Math.abs(parity.candidate[key] - value) < 1e-7, key + ' final parity');
 }
 assert.equal(doc.querySelector('.optimizer-dialog input[data-stat=hp]'), null);
+const genericChecks = vm.runInContext(`(() => {
+  const build = build_node.get_value();
+  const stats = new Map(stat_agg_node.get_value());
+  const spells = new Map();
+  const score = () => OptimizerFinal.values(build, stats, spells).genericSpellHit;
+  const base = score();
+  stats.set('damMult', new Map(stats.get('damMult')));
+  stats.get('damMult').set('Test:2.Blink DPS', 9999);
+  const specific = score();
+  stats.set('sdRaw', stats.get('sdRaw') + 100);
+  const raw = score();
+  stats.set('sdPct', stats.get('sdPct') + 100);
+  return {base, specific, raw, percent:score()};
+})()`, win);
+assert.equal(genericChecks.base, genericChecks.specific);
+assert.ok(genericChecks.raw > genericChecks.base);
+assert.ok(genericChecks.percent > genericChecks.raw);
+doc.getElementById('optimizer-add-ranking').click();
+assert.equal(doc.querySelectorAll('.optimizer-secondary-row').length, 1);
+assert.deepEqual(JSON.parse(win.localStorage.getItem('wynnbuilder.optimizer.v1')).secondary, [{stat:'health',direction:'max'}]);
 const spellKey = Object.keys(parity.live).find(key => key.startsWith('spell:') && !key.includes(':0:') && !key.includes('cost'));
 assert.ok(spellKey, 'selected abilities expose spell metrics');
 const spellOption = doc.createElement('option');

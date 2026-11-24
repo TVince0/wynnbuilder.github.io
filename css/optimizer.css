@@ -323,3 +323,11 @@ select.optimizer-input { cursor: pointer; text-overflow: ellipsis; }
   .overall-box .warning, .overall-box .warning-yellow { font-size: .85rem; }
   .overall-box .spellcost-tooltip b { font-size: .9rem !important; }
 }
+
+.optimizer-secondary-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.75fr) minmax(0, 1.3fr) 34px;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.optimizer-secondary-row .optimizer-button { font-size: 20px; padding: 0; }

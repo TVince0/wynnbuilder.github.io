@@ -69,6 +69,11 @@ const OptimizerFinal = (() => {
     result.poisonMeleeDps = Math.max(0, Math.floor((stats.get('poison') || 0) * baseDamageMultiplier[speed] * [2.6239,2.1198,1.3125,1.0083,.75,.5333,.3333][speed] * 3 * mult));
     result.poisonDps = result.poisonSpellDps + result.poisonMeleeDps;
     const crit = skillPointsToPercentage(stats.get('dex'));
+    // A 100% spell hit with the weapon's existing element distribution.
+    // Omitting a spell part excludes all native part-specific multipliers/conversions.
+    const generic = calculateSpellDamage(stats, build.weapon.statMap, [100, 0, 0, 0, 0, 0], true);
+    result.genericSpellHit = (1 - crit) * (generic[0][0] + generic[0][1]) / 2
+      + crit * (generic[1][0] + generic[1][1]) / 2;
     for (const [id, spell] of spells) {
       if ('cost' in spell) {
         result['spell:' + id + ':cost'] = getSpellCost(stats, spell);
@@ -88,6 +93,9 @@ const OptimizerFinal = (() => {
   }
   function metrics() {
     const metrics = [
+      ['genericSpellHit','Generic spell hit'],
+      ['sdPct','Spell Damage %'], ['sdRaw','Raw Spell Damage'], ['damPct','Damage %'], ['damRaw','Raw Damage'],
+      ...['Earth','Thunder','Water','Fire','Air'].map((name, i) => [skp_elements[i] + 'DamPct', name + ' Damage %']),
       ['health','Total HP'], ['ehp','Effective HP'], ['ehpNoAgi','Effective HP (no agi)'], ['regen','HP Regen (Final)'],
       ...['Earth','Thunder','Water','Fire','Air'].map((name, i) => [skp_elements[i] + 'DefFinal', name + ' Def']),
       ['mr','Mana Regen /5s'], ['manaRegen','Mana Regen with base /5s'], ['ms','Mana Steal /3s'], ['manaPerHit','Mana per hit'],

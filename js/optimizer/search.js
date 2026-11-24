@@ -6,9 +6,17 @@ const OptimizerSearch = (() => {
   function search(pools, tomes, config, progress) {
     const limit = config.limit || 10;
     const direction = config.direction === "min" ? -1 : 1;
+    const rankings = [{stat: config.objective, direction: config.direction}, ...(config.secondary || [])];
+    const compare = (a, b) => {
+      for (const rank of rankings) {
+        const difference = (rank.direction === "min" ? 1 : -1) * (a.stats[rank.stat] - b.stats[rank.stat]);
+        if (difference) return difference;
+      }
+      return 0;
+    };
     const rules = config.rules || [];
     const metrics = new Set([
-      config.objective,
+      ...rankings.map(rank => rank.stat),
       ...rules.map((rule) => rule.stat),
     ]);
     const measure = build => config.finalContext ? OptimizerFinal.measurements(build, config.finalContext) : OptimizerModel.measurements(build);
@@ -197,12 +205,13 @@ const OptimizerSearch = (() => {
     }
     function retain(build, stats) {
       const score = stats[config.objective];
-        if (!Number.isFinite(score)) return;
+      if (!Number.isFinite(score)) return;
       const identity = selected.map((choice) => choice.key);
       if (config.ringSymmetric && identity[4] > identity[5])
         [identity[4], identity[5]] = [identity[5], identity[4]];
       const signature = JSON.stringify(identity);
       if (signatures.has(signature)) return;
+      if (rankings.some(rank => !Number.isFinite(stats[rank.stat]))) return;
       const result = {
         signature,
         score,
@@ -216,7 +225,7 @@ const OptimizerSearch = (() => {
         })),
       };
       builds.push(result);
-      builds.sort((a, b) => direction * (b.score - a.score));
+      builds.sort(compare);
       signatures.add(signature);
       for (const removed of builds.splice(limit))
         signatures.delete(removed.signature);
@@ -267,7 +276,7 @@ const OptimizerSearch = (() => {
         if (!Number.isFinite(score)) continue;
         if (
           builds.length < limit ||
-          direction * score > direction * builds.at(-1).score
+          compare({stats}, builds.at(-1)) < 0
         )
           retain(build, stats);
         report();
@@ -302,7 +311,10 @@ const OptimizerSearch = (() => {
       if (builds.length === limit) {
         const [min, max] = bounds(config.objective, lo, hi),
           cutoff = builds.at(-1).score;
-        if (direction > 0 ? max <= cutoff : min >= cutoff) {
+        const best = direction > 0 ? max : min;
+        const margin = direction * (best - cutoff);
+        const cannotImprove = config.secondary?.length ? margin < 0 : margin <= 0;
+        if (cannotImprove) {
           examined += span;
           report();
           return;
@@ -328,10 +340,10 @@ const OptimizerSearch = (() => {
           ) {
             matched++;
             const score = stats[config.objective];
-        if (!Number.isFinite(score)) return;
+            if (!Number.isFinite(score)) return;
             if (
               builds.length < limit ||
-              direction * score > direction * builds.at(-1).score
+              compare({stats}, builds.at(-1)) < 0
             ) {
               retain(build, stats);
             }

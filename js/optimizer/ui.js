@@ -41,6 +41,7 @@ const BuildOptimizer = (() => {
     const value = {
       mode,
       rules: readRules(),
+      secondary: readSecondary(),
       objective: document.getElementById("optimizer-objective").value,
       direction: document.getElementById("optimizer-direction").value,
       minLevel: document.getElementById("optimizer-min-level").value,
@@ -99,6 +100,24 @@ const BuildOptimizer = (() => {
     return OptimizerFinal.metrics();
   }
 
+  function readSecondary() {
+    return [...(document.getElementById("optimizer-secondary")?.children || [])].map(row => ({
+      stat: row.querySelector("select").value,
+      direction: row.querySelector("[data-direction]").value,
+    }));
+  }
+  function addSecondary(rank = {}) {
+    const row = element("div", {class: "optimizer-secondary-row"});
+    const metric = statSelect(rank.stat || "health");
+    metric.setAttribute("aria-label", "Secondary ranking stat");
+    const direction = element("select", {class: "optimizer-input", "data-direction": "", "aria-label": "Secondary ranking order"});
+    direction.append(element("option", {value: "max"}, "Highest first"), element("option", {value: "min"}, "Lowest first"));
+    direction.value = rank.direction || "max";
+    const remove = element("button", {type: "button", class: "optimizer-button", "aria-label": "Remove secondary ranking"}, "×");
+    remove.onclick = () => {row.remove(); cancel(); resultBox.replaceChildren(); persist();};
+    row.append(metric, direction, remove);
+    document.getElementById("optimizer-secondary").append(row);
+  }
   function statSelect(value) {
     const select = element("select", { class: "optimizer-input" });
     for (const [key, label] of metrics())
@@ -297,6 +316,7 @@ const BuildOptimizer = (() => {
     }
     return {
       rules,
+      secondary: readSecondary(),
       finalContext: OptimizerFinal.snapshot(),
       level,
       minLevel,
@@ -507,7 +527,7 @@ const BuildOptimizer = (() => {
       );
       card.append(allocation);
       const targets = element("p", {class: "optimizer-allocation"});
-      targets.textContent = config.rules.map(rule => OptimizerModel.label(rule.stat) + " " + format(result.stats[rule.stat])).join(" · ");
+      targets.textContent = [...(config.secondary || []), ...config.rules].map(rule => OptimizerModel.label(rule.stat) + " " + format(result.stats[rule.stat])).join(" · ");
       card.append(targets);
       resultBox.append(card);
     }
@@ -661,6 +681,10 @@ const BuildOptimizer = (() => {
               <label>Order<select id="optimizer-direction" class="optimizer-input"><option value="max">Highest first</option><option value="min">Lowest first</option></select></label>
               <label>Results<select id="optimizer-limit" class="optimizer-input"><option>5</option><option selected>10</option><option>25</option></select></label>
             </div>
+            <div id="optimizer-secondary"></div>
+            <button type="button" class="optimizer-button" id="optimizer-add-ranking">+ Secondary ranking</button>
+            <p class="optimizer-hint">Rankings apply in order. Later rankings break ties.</p>
+            <details class="optimizer-notes"><summary>How generic spell damage is measured</summary><p>Generic spell hit is the average damage of a 100% spell hit using the weapon’s existing elements. It combines shared raw and percentage damage, elemental bonuses, skill points, critical chance and general buffs. Individual spell conversions and bonuses are excluded. It is a comparison benchmark. Each actual spell applies its own scaling.</p></details>
             <div class="optimizer-actions"><button type="button" class="optimizer-button optimizer-primary" id="optimizer-run">Find builds <span aria-hidden="true">→</span></button><button type="button" class="optimizer-button" id="optimizer-cancel" hidden>Cancel search</button></div>
             <p id="optimizer-message" role="status"></p>
           </section>
@@ -681,6 +705,13 @@ const BuildOptimizer = (() => {
     message = document.getElementById("optimizer-message");
     runButton = document.getElementById("optimizer-run");
     cancelButton = document.getElementById("optimizer-cancel");
+    for (const rank of saved.secondary || []) addSecondary(rank);
+    document.getElementById("optimizer-add-ranking").onclick = () => {
+      addSecondary();
+      cancel();
+      resultBox.replaceChildren();
+      persist();
+    };
     const objective = statSelect(saved.objective || "regen");
     objective.id = "optimizer-objective";
     document.getElementById("optimizer-objective-wrap").append(objective);
@@ -791,7 +822,7 @@ const BuildOptimizer = (() => {
           resultBox.replaceChildren();
         });
     function updateMetrics() {
-      for (const select of panel.querySelectorAll("#optimizer-objective, #optimizer-rules select")) {
+      for (const select of panel.querySelectorAll("#optimizer-objective, #optimizer-rules select, #optimizer-secondary select:not([data-direction])")) {
         const old = select.value;
         const next = statSelect(old);
         if (![...next.options].some(option => option.value === old)) {
