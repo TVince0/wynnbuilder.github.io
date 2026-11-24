@@ -20,7 +20,49 @@ const OptimizerModel = (() => {
     ["maxManaTotal", "Maximum mana"],
     ["assigned", "Assigned skill points"],
   ];
-  const labels = new Map(baseMetrics);
+  const componentGroups = [
+    ["Health and defense components", [
+      "hprRaw", "hprPct", "hp", "hpBonus", "ls", "healPct",
+      ...skp_elements.flatMap(key => [key + "Def", key + "DefPct"]), "rDefPct",
+    ]],
+    ["Spell damage components", ["sdRaw", "sdPct", ...[...skp_elements, "n", "r"].flatMap(key => [key + "SdRaw", key + "SdPct"])]],
+    ["Melee damage components", ["mdRaw", "mdPct", ...[...skp_elements, "n", "r"].flatMap(key => [key + "MdRaw", key + "MdPct"])]],
+    ["Damage components", [
+      "damRaw", "damPct", "damAddMin", "damAddMax", "critDamPct",
+      ...[...skp_elements, "n", "r"].flatMap(key => [key + "DamRaw", key + "DamPct", key + "DamAddMin", key + "DamAddMax"]),
+    ]],
+    ["Mana and spell cost components", ["mr", "ms", "maxMana", ...[1, 2, 3, 4].flatMap(id => ["spRaw" + id, "spPct" + id, "spPct" + id + "Final"])]],
+  ];
+  const groupedKeys = new Set(componentGroups.flatMap(([, keys]) => keys));
+  componentGroups.push(["Other identifications", rolledIDs.filter(key => !groupedKeys.has(key))]);
+  const componentKeys = [...new Set(componentGroups.flatMap(([, keys]) => keys))];
+  const labels = new Map([
+    ...baseMetrics,
+    ["hprRaw", "HP Regen (Raw)"], ["hprPct", "HP Regen %"],
+    ["hp", "HP before HP Bonus"], ["hpBonus", "HP Bonus"],
+    ["sdPct", "Spell Damage %"], ["sdRaw", "Raw Spell Damage"],
+    ["mdPct", "Melee Damage %"], ["mdRaw", "Raw Melee Damage"],
+    ["damPct", "Damage %"], ["damRaw", "Raw Damage"],
+    ["mr", "Mana Regen /5s"], ["ms", "Mana Steal /3s"], ["maxMana", "Max Mana bonus"],
+    ["poison", "Poison /3s"], ["expd", "Exploding %"], ["spd", "Walk Speed Bonus %"],
+    ["jh", "Jump Height"], ["xpb", "Combat XP Bonus %"], ["lb", "Loot Bonus %"],
+    ["atkTier", "Attack Speed Bonus (tiers)"],
+  ]);
+  for (const [prefix, name] of [["", ""], ...skp_elements.map((key, i) => [key, ["Earth", "Thunder", "Water", "Fire", "Air"][i]]), ["n", "Neutral"], ["r", "Elemental"]]) {
+    const damage = prefix ? prefix + "Dam" : "dam";
+    labels.set(damage + "AddMin", (name ? name + " " : "") + "Added Damage (Min)");
+    labels.set(damage + "AddMax", (name ? name + " " : "") + "Added Damage (Max)");
+    if (skp_elements.includes(prefix)) labels.set(prefix + "Def", name + " Def (Raw)");
+  }
+  for (let id = 1; id <= 4; id++) labels.set("spPct" + id + "Final", "Spell " + id + " Final Cost Modifier %");
+  function componentMetrics() {
+    return componentGroups.flatMap(([group, keys]) => keys.map(key => {
+      let name = label(key);
+      const suffix = typeof idSuffixes !== "undefined" ? idSuffixes[key]?.trim() : "";
+      if (suffix && !name.includes(suffix)) name += " " + suffix;
+      return [key, name, group];
+    }));
+  }
   function label(key) {
     return (
       labels.get(key) ||
@@ -123,6 +165,8 @@ const OptimizerModel = (() => {
     const values = Object.fromEntries(
       [...stats].filter(([, value]) => typeof value === "number"),
     );
+    // Missing numeric IDs represent zero, so zero/negative targets remain usable.
+    for (const key of componentKeys) values[key] ??= 0;
     values.health = defense[0];
     values.ehp = defense[1][0];
     values.regen = defense[2];
@@ -141,6 +185,8 @@ const OptimizerModel = (() => {
     slots,
     labels,
     baseMetrics,
+    componentKeys,
+    componentMetrics,
     label,
     roll,
     prepare,

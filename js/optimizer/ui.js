@@ -125,8 +125,15 @@ const BuildOptimizer = (() => {
   }
   function statSelect(value) {
     const select = element("select", { class: "optimizer-input" });
-    for (const [key, label] of metrics())
-      select.append(element("option", { value: key }, label));
+    const groups = new Map();
+    for (const [key, label, group] of metrics()) {
+      if (!groups.has(group)) {
+        const options = element("optgroup", { label: group });
+        groups.set(group, options);
+        select.append(options);
+      }
+      groups.get(group).append(element("option", { value: key }, label));
+    }
     select.value = value || "regen";
     return select;
   }
@@ -722,6 +729,7 @@ const BuildOptimizer = (() => {
           </section>
           <section class="optimizer-card">
             <div class="optimizer-heading"><h2>Stat targets</h2><button type="button" class="optimizer-button" id="optimizer-add-rule">+ Add target</button></div>
+            <p class="optimizer-hint">Combine final outputs with individual raw or percentage stats. For example, target HP Regen (Final), HP Regen (Raw), and HP Regen % independently.</p>
             <div class="optimizer-rule optimizer-rule-labels" aria-hidden="true"><span>Stat</span><span>Minimum</span><span>Maximum</span></div>
             <div id="optimizer-rules"></div>
             <div class="optimizer-ranking">

@@ -108,16 +108,16 @@ const OptimizerFinal = (() => {
   function metrics() {
     const metrics = [
       ['genericSpellHit','Generic spell hit'],
-      ['sdPct','Spell Damage %'], ['sdRaw','Raw Spell Damage'], ['damPct','Damage %'], ['damRaw','Raw Damage'],
-      ...['Earth','Thunder','Water','Fire','Air'].map((name, i) => [skp_elements[i] + 'DamPct', name + ' Damage %']),
-      ['health','Total HP'], ['ehp','Effective HP'], ['ehpNoAgi','Effective HP (no agi)'], ['regen','HP Regen (Final)'],
-      ...['Earth','Thunder','Water','Fire','Air'].map((name, i) => [skp_elements[i] + 'DefFinal', name + ' Def']),
-      ['mr','Mana Regen /5s'], ['manaRegen','Mana Regen with base /5s'], ['ms','Mana Steal /3s'], ['manaPerHit','Mana per hit'],
-      ['maxMana','Max Mana bonus'], ['maxManaTotal','Total Mana'], ['poison','Poison /3s'], ['expd','Exploding %'],
-      ['spd','Walk Speed Bonus %'], ['jh','Jump Height'], ['xpb','Combat XP Bonus %'], ['lb','Loot Bonus %'],
+      ['health','Total HP'], ['ehp','Effective HP'], ['ehpNoAgi','Effective HP (no agi)'],
+      ['regen','HP Regen (Final)'], ['ehpr','Effective HP Regen'],
+      ...['Earth','Thunder','Water','Fire','Air'].map((name, i) => [skp_elements[i] + 'DefFinal', name + ' Def (Final)']),
+      ['manaRegen','Mana Regen with base /5s'], ['manaPerHit','Mana per hit'], ['maxManaTotal','Total Mana'],
       ['meleeDps','Melee Average DPS'], ['meleePerAttack','Melee Per Attack'], ['attackSpeed','Attack Speed (0–6)'],
       ['poisonDps','Total Poison DPS'], ['poisonMeleeDps','Melee Poison DPS'], ['poisonSpellDps','Spell Poison DPS'],
-    ];
+    ].map(([key, name]) => [key, name, 'Final and combined stats']);
+    metrics.push(...OptimizerModel.componentMetrics());
+    metrics.push(['assigned', 'Assigned skill points', 'Skill points']);
+    ['Strength','Dexterity','Intelligence','Defense','Agility'].forEach((name, i) => metrics.push([skp_order[i], name, 'Skill points']));
     const spells = atree_collect_spells.get_value() || new Map();
     for (const [id, spell] of spells) {
       if ('cost' in spell) metrics.push(['spell:' + id + ':cost', spell.name + ' · Mana cost'], ['spell:' + id + ':costRaw', spell.name + ' · Uncapped mana cost']);
@@ -126,7 +126,10 @@ const OptimizerFinal = (() => {
         metrics.push(['spell:' + id + ':' + part.name, spell.name + ' · ' + part.name]);
       }
     }
-    for (const [key, name] of metrics) OptimizerModel.labels.set(key, name);
+    for (const metric of metrics) {
+      if (!metric[2]) metric[2] = 'Ability tree outputs';
+      OptimizerModel.labels.set(metric[0], metric[1]);
+    }
     return metrics;
   }
   return {snapshot, measurements, values, metrics};

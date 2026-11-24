@@ -390,3 +390,53 @@ test('CUDA candidate totals account for ring symmetry and duplicate restrictions
   })()`);
   assert.deepEqual(JSON.parse(JSON.stringify(totals)),['6','3','9','6','4']);
 });
+
+test('stat menus retain combined metrics and expose every numeric identification once', () => {
+  const c = context();
+  vm.runInContext(fs.readFileSync(path.join(root, 'js/optimizer/final_stats.js'), 'utf8'), c.ctx);
+  const result = c.eval(`(() => {
+    globalThis.atree_collect_spells = {get_value: () => new Map()};
+    const metrics = OptimizerFinal.metrics();
+    const values = OptimizerModel.measurements(OptimizerModel.assemble(106,emptyEquipment(),[],weapon()));
+    return {metrics, missing:rolledIDs.filter(key=>!metrics.some(row=>row[0]===key)),
+      zeros:[values.hprRaw,values.hprPct,values.eDefPct,values.sdRaw]};
+  })()`);
+  const metrics = JSON.parse(JSON.stringify(result.metrics));
+  assert.deepEqual(Array.from(result.missing), []);
+  assert.equal(new Set(metrics.map(row=>row[0])).size, metrics.length);
+  assert.deepEqual(Array.from(result.zeros), [0,0,0,0]);
+  assert.equal(metrics.find(row=>row[0]==='hprRaw')[1], 'HP Regen (Raw)');
+  assert.equal(metrics.find(row=>row[0]==='hprPct')[1], 'HP Regen %');
+  assert.equal(metrics.find(row=>row[0]==='regen')[2], 'Final and combined stats');
+  for (const key of ['genericSpellHit','sdRaw','sdPct','mdRaw','mdPct','eDef','eDefPct','spRaw1','spPct1','ehpr','assigned'])
+    assert.ok(metrics.some(row=>row[0]===key), key);
+});
+
+test('raw and percentage regen targets combine with final regen and independent rankings', async () => {
+  const c = context();
+  const result = await c.eval(`(async () => {
+    const pools=emptyEquipment().concat([weapon()]).map(item=>[{key:item.statMap.get('name'),item}]);
+    pools[0]=[
+      fixture('helmet','raw',{hprRaw:100,hprPct:0}),
+      fixture('helmet','percent',{hprRaw:50,hprPct:100}),
+      fixture('helmet','balanced',{hprRaw:75,hprPct:100})
+    ].map(item=>({key:item.statMap.get('name'),item}));
+    const config={level:106,characterClass:'Mage',objective:'regen',direction:'max',limit:5,duplicateRings:true,
+      rules:[{stat:'hprRaw',min:70},{stat:'hprPct',min:100},{stat:'regen',min:140}]};
+    const exact=OptimizerSearch.search(pools,[],config);
+    const deadline=performance.now()+100;
+    const fast=await OptimizerFast.search(pools,[],{...config,seed:1729},undefined,[],()=>performance.now()>deadline);
+    const raw=OptimizerSearch.search(pools,[],{...config,objective:'hprRaw',rules:[]});
+    const tie=OptimizerSearch.search(pools,[],{...config,rules:[],secondary:[{stat:'hprPct',direction:'max'}]});
+    return {exact:exact.builds,fast:fast.builds,raw:raw.builds[0].pieces[0].name,tie:tie.builds.map(row=>row.pieces[0].name)};
+  })()`);
+  for (const results of [result.exact,result.fast]) {
+    assert.equal(results.length,1);
+    assert.equal(results[0].pieces[0].name,'balanced');
+    assert.equal(results[0].stats.hprRaw,75);
+    assert.equal(results[0].stats.hprPct,100);
+    assert.equal(results[0].stats.regen,150);
+  }
+  assert.equal(result.raw,'raw');
+  assert.deepEqual(Array.from(result.tie),['balanced','percent','raw']);
+});

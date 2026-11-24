@@ -123,6 +123,16 @@ await wait(
 );
 assert.match(doc.getElementById("optimizer-count").textContent, /5,5/);
 assert.equal(doc.getElementById("optimizer-strategy").value, "cuda");
+// Every selector offers precise components alongside combined outputs.
+doc.getElementById('optimizer-add-ranking').click();
+for (const selector of ['#optimizer-objective', '#optimizer-rules select', '#optimizer-secondary select:not([data-direction])']) {
+  const select=doc.querySelector(selector);
+  assert.ok(select.querySelector('optgroup[label="Final and combined stats"]'));
+  assert.ok(select.querySelector('optgroup[label="Health and defense components"]'));
+  for(const key of ['regen','hprRaw','hprPct','genericSpellHit','sdRaw','sdPct','mdRaw','mdPct','eDef','eDefPct'])
+    assert.ok([...select.options].some(option=>option.value===key), selector+' missing '+key);
+}
+doc.getElementById('optimizer-secondary').replaceChildren();
 doc.getElementById("optimizer-strategy").value = "exhaustive";
 doc.getElementById("optimizer-strategy").dispatchEvent(new win.Event("change", {bubbles:true}));
 assert.ok(doc.getElementById("optimizer-lock-helmet").disabled);
@@ -229,6 +239,8 @@ const measured = vm.runInContext(
 );
 assert.equal(nativeDefense[0], measured.health);
 assert.equal(nativeDefense[2], measured.regen);
+assert.equal(measured.hprRaw, displayStats.get('hprRaw') || 0);
+assert.equal(measured.hprPct, displayStats.get('hprPct') || 0);
 assert.equal(displayStats.get("mr"), measured.mr);
 // Native final-node parity with active abilities and buffs, independent of the worker.
 vm.runInContext(`
@@ -330,6 +342,21 @@ assert.equal(
 );
 
 const expectedCudaScore = vm.runInContext("OptimizerFinal.measurements(build_node.get_value(), OptimizerFinal.snapshot())", win)[lastRequest.config.objective];
+
+// The CUDA validator uses the same precise components as the live final graph.
+const {nativeContext} = await import('../backend/native.mjs');
+const preciseRequest = structuredClone(lastRequest);
+const liveComponents = vm.runInContext("OptimizerFinal.measurements(build_node.get_value(), OptimizerFinal.snapshot())", win);
+Object.assign(preciseRequest.config, {
+  objective:'hprRaw', secondary:[{stat:'hprPct',direction:'max'}],
+  rules:['hprRaw','hprPct','regen'].map(stat=>({stat,min:liveComponents[stat],max:liveComponents[stat]})),
+});
+const preciseContext = nativeContext(preciseRequest);
+const preciseRows = vm.runInContext('OptimizerCuda.evaluateBatch(prepared,payload,[payload.offsets])',preciseContext);
+assert.equal(preciseRows.length,1);
+for(const key of ['hprRaw','hprPct','regen']) assert.equal(preciseRows[0].stats[key],liveComponents[key]);
+assert.equal(preciseRows[0].score,liveComponents.hprRaw);
+assert.equal(vm.runInContext('payload.items[payload.offsets[0]][21]',preciseContext),preciseRequest.pools[0][0].map.get('maxRolls').get('hprRaw'));
 
 // Reopen the actual native share URL in a fresh document and compute graph.
 const reloaded = createWindow(win.location.href);
