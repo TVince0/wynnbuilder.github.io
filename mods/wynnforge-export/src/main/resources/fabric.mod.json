@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "wynnforge_export",
+  "version": "${version}",
+  "name": "WynnForge Item Export",
+  "description": "Copy Wynncraft item identification values into WynnForge.",
+  "environment": "client",
+  "license": "GPL-3.0-only",
+  "entrypoints": {"client": ["dev.wynnforge.export.WynnForgeExport"]},
+  "mixins": ["wynnforge-export.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.18.4",
+    "minecraft": "1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}

@@ -32,6 +32,7 @@ function createWindow(url) {
   for (const [key, value] of Object.entries(idb))
     if (key !== "default") window[key] = value;
   window.structuredClone = structuredClone;
+  window.TextEncoder = TextEncoder;
   window.Worker = WorkerShim;
   window.fetch = (input, options) => fetch(new URL(input?.url ?? input, url), options);
   window.HTMLElement.prototype.scrollIntoView = function () {};
@@ -507,6 +508,45 @@ assert.equal(
   "realistic",
 );
 await reloaded.happyDOM.close();
+// The mod import uses the real native graph, slot locks and share state.
+const copiedItems = {format:'wynnforge.items',version:1,items:[{
+  name:'Third Eye', minecraftId:'minecraft:leather_helmet', sourceSlot:'hovered:5',
+  lore:['Mana Regen +7/5s','Water Defence +20%','1st Spell Cost -10%',
+    '2nd Spell Cost -11%','3rd Spell Cost -12%','4th Spell Cost -13%','Elemental Defence +40%'],
+  rawItem:{components:{'minecraft:custom_data':{opaque:'preserved source'}}},
+}]};
+doc.getElementById('wynnforge-import-open').click();
+const importDialog = doc.querySelector('.wynnforge-import');
+const importJson = doc.getElementById('wynnforge-import-json');
+assert.ok(importDialog.hasAttribute('open'));
+const modDownload = await fetch(importDialog.querySelector('a[download]').href);
+assert.equal(modDownload.status,200,'the mod download must be included in the served site');
+assert.equal(Buffer.from(await modDownload.arrayBuffer()).subarray(0,4).toString('hex'),'504b0304','the mod download must be a jar');
+importJson.value = JSON.stringify(copiedItems);
+const importButtons = [...importDialog.querySelectorAll('button')];
+importButtons.find(button=>button.textContent==='Review items').click();
+assert.equal(importDialog.querySelector('select').value,'helmet');
+assert.match(importDialog.textContent,/Mana Regen/);
+doc.getElementById('helmet-powder').value='w6w6';
+importButtons.find(button=>button.textContent==='Apply selected items').click();
+assert.equal(importDialog.hasAttribute('open'),false);
+assert.equal(doc.getElementById('helmet-powder').value,'');
+assert.equal(doc.getElementById('optimizer-lock-helmet').checked,true);
+assert.equal(vm.runInContext("equip_inputs[0].get_value().statMap.get('maxRolls').get('mr')", win),7);
+assert.equal(vm.runInContext("item_final_nodes[0].get_value().statMap.get('maxRolls').get('spPct3')",win),-12);
+assert.equal(vm.runInContext("item_final_nodes[0].get_value().statMap.get('powders').length",win),0);
+assert.equal(JSON.parse(new URL(win.location.href).searchParams.get('optimizer')).owned.helmet.actual.mr,7);
+win.invalidCopy = {...copiedItems.items[0],lore:['Mana Regen +7/5s']};
+assert.throws(()=>vm.runInContext("BuildOptimizer.applyOwnedImport([{slot:'helmet',source:invalidCopy}])",win),/Missing identifications/);
+assert.equal(vm.runInContext("equip_inputs[0].get_value().statMap.get('maxRolls').get('mr')", win),7);
+win.copiedItems = copiedItems;
+assert.throws(()=>vm.runInContext("BuildOptimizer.importPool(copiedItems)",win),/Import game items/);
+// Import survives the actual sharing/reload path with exact copied values.
+const copiedReload = createWindow(win.location.href);
+await openBuilder(copiedReload);
+await wait(()=>copiedReload.document.getElementById('wynnforge-import-open'),'copied item share reload');
+assert.equal(vm.runInContext("equip_inputs[0].get_value().statMap.get('maxRolls').get('mr')",copiedReload),7);
+await copiedReload.happyDOM.close();
 win.importedData = JSON.parse(
   fs.readFileSync(root + "/data/2.2.6.0/items.json", "utf8"),
 );

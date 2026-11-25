@@ -30,6 +30,12 @@ Optimistic uses each identification's native best endpoint. Pessimistic uses its
 
 The native **Copy short** and **Copy for sharing** links retain scenario and owned-roll data in an `optimizer` query parameter alongside WynnBuilder's normal hash. Open those links on this fork to restore the values. The upstream site uses its own default roll behavior.
 
+## Copy owned items from Minecraft
+
+Use **Import game items** to paste a WynnForge Item Export payload or open its JSON backup. Review the actual identification values and choose equipment destinations before applying. Selected slots are replaced and locked; two copies of the same ring keep independent values. Replaced slots have their powders cleared, so set those in the equipment editor after importing. Sharing links retain the copied rolls.
+
+The [Fabric 1.21.11 mod and guide](mods/wynnforge-export/README.md) explain installation, **Ctrl+Shift+C**, `/wynnforge hand`, and `/wynnforge inventory`. The importer requires complete variable IDs matching the loaded database version and blocks incomplete or out-of-range rows. Use the identification tooltip page when copying. This is separate from **Import candidate JSON**, which only filters the search catalog by item names.
+
 ## Functioning builds and skill points
 
 Every returned result must satisfy the complete loadout's skill requirements. There is no switch to disable this validation.
