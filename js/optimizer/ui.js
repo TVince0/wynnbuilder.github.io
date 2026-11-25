@@ -324,7 +324,9 @@ const BuildOptimizer = (() => {
     seedBuilds=seedBuilds.filter(old=>old.version!==seed.version||JSON.stringify(old.pieces.map(piece=>piece.key))!==signature);
     seedBuilds.push(seed);seedBuilds=seedBuilds.slice(-8);updateSeeds();persist();return seed;
   }
-  function repairLink(raw, navigate = true) {
+  function repairLink(raw, navigate = true, {keepLocks = true} = {}) {
+    if (typeof raw !== 'string' || !raw.trim())
+      throw Error('Paste a WynnBuilder share link first.');
     const source=new URL(raw.trim(),location.href);
     if(!['http:','https:'].includes(source.protocol)||source.hash.length<2||source.hash.length>65536||!/^#[A-Za-z0-9+_$-]+$/.test(source.hash))
       throw Error('Paste a WynnBuilder share link with a build hash.');
@@ -334,9 +336,9 @@ const BuildOptimizer = (() => {
     target.hash=source.hash;
     const token=Date.now().toString(36)+Math.random().toString(36).slice(2);
     target.searchParams.set('optimizerRepair',token);
-    const locked=slots.filter(slot=>document.getElementById('optimizer-lock-'+slot).checked).map(slot=>({slot,value:field(slot).value,owned:overrides.get(slot)}));
+    const locked=keepLocks ? slots.filter(slot=>document.getElementById('optimizer-lock-'+slot).checked).map(slot=>({slot,value:field(slot).value,owned:overrides.get(slot),powders:document.getElementById(slot+'-powder')?.value})) : [];
     persist();
-    localStorage.setItem(pendingRepairKey,JSON.stringify({url:target.href,token,locked,pool:currentPool?[...currentPool]:null,
+    localStorage.setItem(pendingRepairKey,JSON.stringify({url:target.href,token,locked,keepLocks,pool:currentPool?[...currentPool]:null,
       excludeCrafted:document.getElementById('optimizer-no-crafted').checked,
       excludeGuildTome:document.getElementById('optimizer-no-guild').checked,
       nonnegativeRegen:document.getElementById('optimizer-positive-regen').checked}));
@@ -353,9 +355,13 @@ const BuildOptimizer = (() => {
       params.delete('optimizerRepair');
       history.replaceState(null,'',location.pathname+(params.size?'?'+params:'')+location.hash);
       captureSeed('Shared '+(item_final_nodes[8].get_value()?.statMap.get('displayName')||'build'));
+      if (pending.keepLocks === false)
+        for (const slot of slots) document.getElementById('optimizer-lock-'+slot).checked = false;
       for(const entry of pending.locked||[]){
         if(!slots.includes(entry.slot))continue;
         field(entry.slot).value=entry.value;
+        const powderInput = document.getElementById(entry.slot+'-powder');
+        if (powderInput && typeof entry.powders === 'string') powderInput.value = entry.powders;
         if(entry.owned)overrides.set(entry.slot,entry.owned);
         document.getElementById('optimizer-lock-'+entry.slot).checked=true;
       }
@@ -364,8 +370,18 @@ const BuildOptimizer = (() => {
       document.getElementById('optimizer-repair-seeds').checked=true;
       if(pending.pool)importPool(pending.pool);
       refreshBuild();
-      notice('Shared build loaded and saved as a starting point. Targets and locked owned pieces are retained. Choose restrictions, then Find builds.');
-    }catch(error){notice(error.message,true);}
+      persist();
+      const loaded = 'Build imported and saved as a starting point. ' +
+        (pending.locked?.length ? 'Your locked equipment was kept. ' : '') +
+        'Review Equipment below, adjust your targets, then choose Find builds.';
+      document.getElementById('optimizer-build-import-status').textContent = loaded;
+      notice(loaded);
+    }catch(error){
+      const status = document.getElementById('optimizer-build-import-status');
+      status.textContent = error.message;
+      status.classList.add('optimizer-error');
+      notice(error.message,true);
+    }
   }
   function clearGuildTome() {
     if(!document.getElementById('optimizer-no-guild').checked)return;
@@ -533,7 +549,7 @@ const BuildOptimizer = (() => {
           (!record.classReq ||
             String(record.classReq).toLowerCase() ===
               config.characterClass.toLowerCase()) &&
-          (!rarity || record.tier === rarity),
+          (!rarity || (rarity === 'non-normal' ? record.tier !== 'Normal' : record.tier === rarity)),
       );
       const pools = slots.map((slot, i) => {
         const locked = document.getElementById(
@@ -868,14 +884,25 @@ const BuildOptimizer = (() => {
       </header>
       <div class="optimizer-workspace">
         <div class="optimizer-config">
+          <section class="optimizer-card optimizer-build-import" aria-labelledby="optimizer-build-import-title">
+            <h2 id="optimizer-build-import-title">Import a build</h2>
+            <p class="optimizer-hint" id="optimizer-build-import-help">Copy a build's full WynnBuilder link, paste it here, then choose Import build. Its equipment, powders, tomes, aspects and ability tree open in this editor. Your targets and rankings stay available.</p>
+            <label for="optimizer-seed-link">WynnBuilder share link</label>
+            <input id="optimizer-seed-link" class="optimizer-input" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://wynnbuilder.github.io/builder/#…" aria-describedby="optimizer-build-import-help optimizer-build-import-status">
+            <label class="optimizer-check"><input type="checkbox" id="optimizer-import-keep-locks">Keep my locked equipment when importing</label>
+            <div class="optimizer-actions"><button type="button" class="optimizer-button optimizer-primary" id="optimizer-seed-load">Import build</button></div>
+            <p id="optimizer-build-import-status" class="optimizer-hint" role="status"></p>
+            <p class="optimizer-hint">For individual pieces copied from Minecraft, use Import game items at the top. To limit search candidates with a JSON file, open Item pool below.</p>
+          </section>
           <section class="optimizer-card">
             <h2>Search settings</h2>
             <div class="optimizer-controls">
               <label>Class<select id="optimizer-class" class="optimizer-input"><option value="current">Current weapon</option><option value="wand">Mage</option><option value="spear">Warrior</option><option value="bow">Archer</option><option value="dagger">Assassin</option><option value="relik">Shaman</option></select></label>
               <label>Roll scenario<select id="optimizer-mode" class="optimizer-input"><option value="optimistic">Optimistic · best</option><option value="realistic">Realistic · midpoint</option><option value="pessimistic">Pessimistic · worst</option></select></label>
               <label>Minimum gear level<input type="number" min="1" max="121" value="1" id="optimizer-min-level" class="optimizer-input"></label>
-              <label>Item tier<select id="optimizer-rarity" class="optimizer-input"><option value="">All tiers</option></select></label>
+              <label>Item tier<select id="optimizer-rarity" class="optimizer-input"><option value="">All tiers</option><option value="non-normal">Non-Normal</option></select></label>
             </div>
+            <p class="optimizer-hint">Non-Normal excludes Normal items from unlocked slots. Locked equipment stays fixed.</p>
             <details class="optimizer-pool">
               <summary>Item pool <span id="optimizer-pool-name">Full database</span></summary>
               <div class="optimizer-actions">
@@ -896,10 +923,9 @@ const BuildOptimizer = (() => {
             <p class="optimizer-hint" id="optimizer-search-help">Search runs until you stop it. Every returned result is validated. Global optimality is unproven.</p>
           </section>
           <section class="optimizer-card">
-            <details class="optimizer-notes optimizer-seed-panel"><summary>Repair shared builds / starting builds</summary>
-              <p class="optimizer-hint">Load a WynnBuilder link through the native editor, then repair its equipment under your targets. The current editor's tree and buff settings are used. Locked owned pieces stay fixed.</p>
-              <label>WynnBuilder share link<input id="optimizer-seed-link" class="optimizer-input" type="url" placeholder="https://wynnbuilder.github.io/builder/#…"></label>
-              <div class="optimizer-actions"><button type="button" class="optimizer-button" id="optimizer-seed-load">Load share link</button><button type="button" class="optimizer-button" id="optimizer-seed-current">Save current build as starting point</button><button type="button" class="optimizer-button" id="optimizer-seed-clear">Clear saved starts</button></div>
+            <details class="optimizer-notes optimizer-seed-panel"><summary>Starting builds and repair options</summary>
+              <p class="optimizer-hint">Imported builds are saved as starting points automatically. You can also save the current equipment. Find builds searches for replacements under your targets, using this editor's tree and buff settings. Locked pieces stay fixed.</p>
+              <div class="optimizer-actions"><button type="button" class="optimizer-button" id="optimizer-seed-current">Save current build as starting point</button><button type="button" class="optimizer-button" id="optimizer-seed-clear">Clear saved starts</button></div>
               <p id="optimizer-seed-count" class="optimizer-hint"></p>
               <label class="optimizer-check"><input type="checkbox" id="optimizer-repair-seeds">Systematic nearby-build repair (CUDA)</label>
               <label class="optimizer-check"><input type="checkbox" id="optimizer-no-crafted">Exclude crafted gear</label>
@@ -1137,7 +1163,29 @@ const BuildOptimizer = (() => {
       document.getElementById(id).checked=key==='repairSeeds'?saved[key]!==false:!!saved[key];
     document.getElementById('optimizer-seed-current').onclick=()=>{try{captureSeed();document.getElementById('optimizer-repair-seeds').checked=true;persist();notice('Starting build saved. Unlocked pieces can be replaced; owned locks are retained.');}catch(error){notice(error.message,true);}};
     document.getElementById('optimizer-seed-clear').onclick=()=>{seedBuilds=[];updateSeeds();persist();};
-    document.getElementById('optimizer-seed-load').onclick=()=>{try{repairLink(document.getElementById('optimizer-seed-link').value);}catch(error){notice(error.message,true);}};
+    const buildLink = document.getElementById('optimizer-seed-link');
+    const importStatus = document.getElementById('optimizer-build-import-status');
+    document.getElementById('optimizer-seed-load').onclick = () => {
+      try {
+        repairLink(buildLink.value, true, {keepLocks: document.getElementById('optimizer-import-keep-locks').checked});
+      } catch(error) {
+        importStatus.textContent = error.message;
+        importStatus.classList.add('optimizer-error');
+        buildLink.setAttribute('aria-invalid', 'true');
+        buildLink.focus();
+      }
+    };
+    buildLink.addEventListener('input', () => {
+      importStatus.textContent = '';
+      importStatus.classList.remove('optimizer-error');
+      buildLink.removeAttribute('aria-invalid');
+    });
+    buildLink.addEventListener('keydown', event => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        document.getElementById('optimizer-seed-load').click();
+      }
+    });
     updateSeeds();
     if (mode !== "optimistic" || overrides.size) refreshBuild();
     consumeRepair();

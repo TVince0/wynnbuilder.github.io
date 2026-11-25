@@ -124,6 +124,17 @@ await wait(
 );
 assert.match(doc.getElementById("optimizer-count").textContent, /5,5/);
 assert.equal(doc.getElementById("optimizer-strategy").value, "cuda");
+assert.equal(doc.getElementById('optimizer-seed-link').closest('details'), null, 'build import is visible without expanding settings');
+assert.equal(doc.getElementById('optimizer-import-keep-locks').checked, false);
+doc.getElementById('optimizer-seed-load').click();
+assert.match(doc.getElementById('optimizer-build-import-status').textContent, /Paste a WynnBuilder/);
+assert.equal(doc.activeElement, doc.getElementById('optimizer-seed-link'));
+doc.getElementById('optimizer-seed-link').value = 'https://wynnbuilder.github.io/builder/';
+doc.getElementById('optimizer-seed-link').dispatchEvent(new win.Event('input', {bubbles:true}));
+assert.equal(doc.getElementById('optimizer-seed-link').hasAttribute('aria-invalid'), false);
+doc.getElementById('optimizer-seed-load').click();
+assert.match(doc.getElementById('optimizer-build-import-status').textContent, /build hash/);
+assert.equal(win.localStorage.getItem('wynnbuilder.optimizer.pendingRepair.v1'), null);
 // Every selector offers precise components alongside combined outputs.
 doc.getElementById('optimizer-add-ranking').click();
 for (const selector of ['#optimizer-objective', '#optimizer-rules select', '#optimizer-secondary select:not([data-direction])']) {
@@ -447,6 +458,48 @@ vm.runInContext('OptimizerCudaClient=savedCudaClient',win);
 
 // Shared-link repair reuses the native decoder, keeps owned locks and clears guild support.
 const requestBeforeRepair=lastRequest;
+// Inspect the prepared pools for every backend before any worker executes.
+const tierWindow = createWindow(win.location.href);
+await openBuilder(tierWindow);
+await wait(()=>tierWindow.document.getElementById('optimizer-run'), 'tier filter mount');
+vm.runInContext(`
+  OptimizerCudaClient = class {
+    postMessage(request){globalThis.tierRequest=request;}
+    terminate(){}
+  };
+  globalThis.normalHelmet = [...itemMap.values()].find(item=>item.type==='helmet' && item.tier==='Normal' && !item.remapID && item.lvl<=106).displayName;
+`, tierWindow);
+tierWindow.candidates = [...names, tierWindow.normalHelmet];
+vm.runInContext('BuildOptimizer.importPool(candidates)', tierWindow);
+const tierDoc = tierWindow.document;
+const rarity = tierDoc.getElementById('optimizer-rarity');
+assert.equal([...rarity.options].find(option=>option.value==='non-normal').textContent, 'Non-Normal');
+tierDoc.getElementById('optimizer-run').click();
+assert.ok(tierWindow.tierRequest.pools[0].some(entry=>entry.map.get('tier')==='Normal'));
+rarity.value = 'non-normal';
+rarity.dispatchEvent(new tierWindow.Event('change', {bubbles:true}));
+tierDoc.getElementById('optimizer-run').click();
+assert.ok(tierWindow.tierRequest.pools.flat().every(entry=>entry.map.get('tier')!=='Normal'));
+assert.equal(tierWindow.tierRequest.pools[0].length, 1);
+assert.equal(JSON.parse(tierWindow.localStorage.getItem('wynnbuilder.optimizer.v1')).rarity, 'non-normal');
+rarity.value = 'Legendary';
+tierDoc.getElementById('optimizer-run').click();
+assert.ok(tierWindow.tierRequest.pools.flat().every(entry=>entry.map.get('tier')==='Legendary'));
+rarity.value = 'non-normal';
+tierDoc.getElementById('helmet-choice').value = tierWindow.normalHelmet;
+tierDoc.getElementById('helmet-choice').dispatchEvent(new tierWindow.Event('input', {bubbles:true}));
+await sleep(650);
+tierDoc.getElementById('optimizer-lock-helmet').checked = true;
+tierDoc.getElementById('optimizer-run').click();
+assert.equal(tierWindow.tierRequest.pools[0].length, 1);
+assert.equal(tierWindow.tierRequest.pools[0][0].map.get('tier'), 'Normal', 'explicit locks keep their equipment');
+const tierReload = createWindow(tierWindow.location.href);
+tierReload.localStorage.setItem('wynnbuilder.optimizer.v1', tierWindow.localStorage.getItem('wynnbuilder.optimizer.v1'));
+await openBuilder(tierReload);
+await wait(()=>tierReload.document.getElementById('optimizer-run'), 'tier settings reload');
+assert.equal(tierReload.document.getElementById('optimizer-rarity').value, 'non-normal');
+await tierReload.happyDOM.close();
+await tierWindow.happyDOM.close();
 const sourceRepair=createWindow(win.location.href);
 sourceRepair.localStorage.setItem('wynnbuilder.optimizer.v1',win.localStorage.getItem('wynnbuilder.optimizer.v1'));
 await openBuilder(sourceRepair);
@@ -455,6 +508,7 @@ const sourceDoc=sourceRepair.document;
 sourceDoc.getElementById('optimizer-seed-current').click();
 assert.ok(sourceDoc.getElementById('optimizer-seed-count').textContent.includes('1 saved'));
 for(const id of ['optimizer-no-crafted','optimizer-no-guild','optimizer-positive-regen'])sourceDoc.getElementById(id).checked=true;
+sourceDoc.getElementById('helmet-powder').value='w6';
 sourceRepair.shareRepairLink='https://wynnbuilder.github.io/builder/'+sourceRepair.location.search+sourceRepair.location.hash;
 const repairURL=vm.runInContext('BuildOptimizer.repairLink(shareRepairLink,false)',sourceRepair);
 assert.equal(new URL(repairURL).origin,new URL(address).origin);
@@ -474,11 +528,35 @@ repaired.document.getElementById('optimizer-strategy').dispatchEvent(new repaire
 repaired.document.getElementById('optimizer-run').click();
 await wait(()=>repaired.document.querySelector('.optimizer-result'),'repair source search');
 assert.equal(repaired.document.getElementById('guildTome1-choice').value,'');
+assert.equal(repaired.document.getElementById('helmet-powder').value,'w6','retained locked gear keeps its powders');
 assert.equal(lastRequest.config.excludeGuildTome,true);
 assert.equal(lastRequest.config.excludeCrafted,true);
 assert.ok(lastRequest.config.seedBuilds.length);
 assert.ok(lastRequest.config.rules.some(rule=>rule.stat==='regen'&&rule.min>=0));
 assert.ok(lastRequest.tomes.every(map=>map.get('type')!=='guildTome'||map.has('NONE')));
+// The visible import button replaces the loadout by default, using the native URL decoder.
+sourceDoc.getElementById('helmet-choice').value='Blue Mask';
+sourceDoc.getElementById('helmet-choice').dispatchEvent(new sourceRepair.Event('input', {bubbles:true}));
+sourceDoc.getElementById('optimizer-lock-helmet').checked=true;
+sourceDoc.getElementById('optimizer-seed-link').value=sourceRepair.shareRepairLink;
+sourceDoc.getElementById('optimizer-seed-link').dispatchEvent(new sourceRepair.KeyboardEvent('keydown', {key:'Enter',bubbles:true,cancelable:true}));
+const importPending=sourceRepair.localStorage.getItem('wynnbuilder.optimizer.pendingRepair.v1');
+assert.equal(JSON.parse(importPending).keepLocks,false);
+assert.deepEqual(JSON.parse(importPending).locked,[]);
+const importedBuild=createWindow(sourceRepair.location.href);
+importedBuild.localStorage.setItem('wynnbuilder.optimizer.pendingRepair.v1',importPending);
+importedBuild.localStorage.setItem('wynnbuilder.optimizer.v1',sourceRepair.localStorage.getItem('wynnbuilder.optimizer.v1'));
+await openBuilder(importedBuild);
+await wait(()=>importedBuild.document.getElementById('optimizer-run'),'imported build mount');
+assert.equal(importedBuild.document.getElementById('helmet-choice').value,'Third Eye');
+assert.equal(importedBuild.document.querySelectorAll('.optimizer-pin input:checked').length,0);
+assert.match(importedBuild.document.getElementById('optimizer-build-import-status').textContent,/Build imported/);
+assert.ok(importedBuild.document.getElementById('optimizer-seed-count').textContent.includes('1 saved'));
+assert.equal(importedBuild.document.getElementById('optimizer-mode').value,'realistic');
+assert.equal(vm.runInContext("equip_inputs[0].get_value().statMap.get('maxRolls').get('mr')",importedBuild),0);
+assert.equal(importedBuild.localStorage.getItem('wynnbuilder.optimizer.pendingRepair.v1'),null);
+assert.equal(new URL(importedBuild.location.href).searchParams.has('optimizerRepair'),false);
+await importedBuild.happyDOM.close();
 await sourceRepair.happyDOM.close();await repaired.happyDOM.close();lastRequest=requestBeforeRepair;
 
 // Reopen the actual native share URL in a fresh document and compute graph.

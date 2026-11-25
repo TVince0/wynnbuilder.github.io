@@ -30,6 +30,19 @@ Optimistic uses each identification's native best endpoint. Pessimistic uses its
 
 The native **Copy short** and **Copy for sharing** links retain scenario and owned-roll data in an `optimizer` query parameter alongside WynnBuilder's normal hash. Open those links on this fork to restore the values. The upstream site uses its own default roll behavior.
 
+**Item tier → Non-Normal** includes every native tier except Normal in unlocked candidate slots. Specific tiers, such as Legendary, still select only that tier. Explicitly locked equipment stays fixed regardless of the tier filter. The tier choice is remembered in this browser.
+
+## Import another build
+
+1. Copy the complete WynnBuilder share URL for the build you want, including the part after `#`.
+2. Paste it into **WynnBuilder share link** in **Import a build**, above Search settings.
+3. Choose **Import build** or press Enter. This opens the build in this editor using its linked data version, equipment, powders, tomes, aspects and ability tree. Links from this fork also restore their roll scenario and copied item values.
+4. Review **Equipment**, adjust your targets, and choose **Find builds** to search for replacements. Imported equipment is also saved as a starting build.
+
+By default, importing replaces the equipped build and clears your previous equipment locks. Check **Keep my locked equipment when importing** to keep those pieces and their actual rolls while loading the rest of the shared build. Your search targets, rankings, restrictions and candidate pool are retained. Buff settings follow the native editor's behavior; share links do not encode every interactive setting.
+
+Use **Import game items** for individual pieces copied from Minecraft. Use **Item pool → Import candidate JSON** to restrict the search database by item names. For a complete build, use its share link in **Import a build**.
+
 ## Copy owned items from Minecraft
 
 Use **Import game items** to paste a WynnForge Item Export payload or open its JSON backup. Review the actual identification values and choose equipment destinations before applying. Selected slots are replaced and locked; two copies of the same ring keep independent values. Replaced slots have their powders cleared, so set those in the equipment editor after importing. Sharing links retain the copied rolls.
@@ -81,7 +94,7 @@ After starting a search, **Export search input** downloads its prepared candidat
 
 ## Repair shared builds
 
-Expand **Repair shared builds / starting builds**, paste a WynnBuilder share link, and choose **Load share link**. The native decoder loads the source tree, powders, aspects and data version on this local site. Its gear is saved as a starting example. Targets, rankings, owned locks/actual rolls and your imported item pool are retained. You can also save the currently open build. Up to eight class/version-compatible examples are retained in this browser.
+Use **Import a build** above Search settings to load a shared build. To repair it around your owned pieces, check **Keep my locked equipment when importing** before loading the link. Expand **Starting builds and repair options** to save the currently open equipment or clear saved examples. Up to eight class/version-compatible examples are retained in this browser.
 
 Enable **Systematic nearby-build repair (CUDA)** to prioritize unique one-piece swaps and bounded two-piece repairs alongside global GPU exploration. This option is enabled by default. Choose **No guild tome**, **Exclude crafted gear**, or **Require HP Regen (Final) ≥ 0** as needed. A stricter existing regen minimum remains in force. Unlock crafted pieces if they conflict with the crafted exclusion.
 

@@ -6,6 +6,8 @@ This fork adds a local CUDA search backend, final-stat targets, owned-item rolls
 
 [Optimizer usage, static build, validity rules and tests](OPTIMIZER.md)
 
+To load someone else's build, paste its full WynnBuilder share link into **Import a build** above Search settings and choose **Import build**. Enable **Keep my locked equipment when importing** if you want to retain your owned pieces. **Item tier → Non-Normal** excludes Normal items from unlocked search candidates.
+
 Wynncraft class building calculator & general utility site
 
 ![Builder Screenshot](https://user-images.githubusercontent.com/110062564/192047798-d8583fe1-b188-4bc4-85a9-0eecbf10aeef.PNG)
