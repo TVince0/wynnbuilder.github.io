@@ -1,0 +1,46 @@
+name: WynnForge item export
+
+on:
+  push:
+    paths:
+      - 'mods/wynnforge-export/**'
+      - 'js/optimizer/item_import*'
+      - 'tests/item-import.test.cjs'
+      - '.github/workflows/wynnforge-export.yml'
+  pull_request:
+    paths:
+      - 'mods/wynnforge-export/**'
+      - 'js/optimizer/item_import*'
+      - 'tests/item-import.test.cjs'
+      - '.github/workflows/wynnforge-export.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mod:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build Fabric 1.21.11 mod
+        working-directory: mods/wynnforge-export
+        run: ./gradlew build --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wynnforge-export-fabric-1.21.11
+          path: mods/wynnforge-export/build/libs/*.jar
+          if-no-files-found: error
+  importer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test tests/item-import.test.cjs

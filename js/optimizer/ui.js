@@ -784,6 +784,8 @@ const BuildOptimizer = (() => {
     goToField("weapon");
   }
   function importPool(input) {
+    if (input?.format === "wynnforge.items")
+      throw new Error("Use Import game items to review and apply copied identification rolls.");
     const rows = Array.isArray(input) ? input : (input.items ?? input.results);
     if (!Array.isArray(rows))
       throw new Error("JSON must be an item array or contain items: [...].");
@@ -1139,6 +1141,7 @@ const BuildOptimizer = (() => {
     updateSeeds();
     if (mode !== "optimistic" || overrides.size) refreshBuild();
     consumeRepair();
+    WynnForgeImportUI.mount();
   }
   // A link's scenario and owned values take precedence over local preferences.
   try {
@@ -1172,6 +1175,33 @@ const BuildOptimizer = (() => {
     queryString,
     importPool,
     repairLink,
+    applyOwnedImport(entries) {
+      ensureReady();
+      if (!Array.isArray(entries) || !entries.length || entries.length > 9)
+        throw new Error("Choose 1–9 items to equip.");
+      const parsed = WynnForgeItems.parse({format: "wynnforge.items", version: 1, items: entries.map(entry => entry.source)}, itemMap);
+      const used = new Set();
+      // Validate the entire operation before touching equipment or overrides.
+      for (const [i, row] of parsed.entries()) {
+        const slot = entries[i].slot;
+        if (row.error) throw new Error(row.error);
+        if (!WynnForgeItems.slotsFor(row.type).includes(slot) || used.has(slot))
+          throw new Error("Each item needs a unique compatible equipment slot.");
+        used.add(slot);
+      }
+      cancel();
+      for (const [i, row] of parsed.entries()) {
+        const slot = entries[i].slot;
+        field(slot).value = row.name;
+        const powder = document.getElementById(slot + "-powder");
+        if (powder) powder.value = "";
+        overrides.set(slot, {name: row.name, actual: row.actual});
+        document.getElementById("optimizer-lock-" + slot).checked = true;
+      }
+      for (const node of powder_nodes) {node.mark_dirty(); node.update();}
+      refreshBuild();
+      notice(parsed.length + " item(s) imported with actual rolls and locked for search. Set powders in the equipment editor.");
+    },
     search,
     cancel,
     reset() {

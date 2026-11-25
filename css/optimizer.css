@@ -342,3 +342,12 @@ select.optimizer-input { cursor: pointer; text-overflow: ellipsis; }
 .optimizer-closest-table th, .optimizer-closest-table td { padding: 8px 4px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; text-align: right; }
 .optimizer-closest-table th:first-child, .optimizer-closest-table td:first-child { width: 36%; text-align: left; }
 .optimizer-closest-table .optimizer-target-missed { color: #f6ba85; }
+
+/* Copied in-game identification review. */
+.wynnforge-import { width: min(48rem, calc(100vw - 2rem)); max-height: 90vh; overflow: auto; }
+.wynnforge-import textarea { width: 100%; margin-bottom: 1rem; font-family: monospace; }
+.wynnforge-import-item { border-top: 1px solid #45536b; padding: 1rem 0; }
+.wynnforge-import-item h3 { overflow-wrap: anywhere; }
+.wynnforge-import-item p { overflow-wrap: anywhere; }
+.wynnforge-roll-values { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .25rem 1rem; margin: .75rem 0; }
+.wynnforge-roll-values dd { margin: 0; font-variant-numeric: tabular-nums; }

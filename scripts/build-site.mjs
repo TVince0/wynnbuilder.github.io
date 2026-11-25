@@ -8,6 +8,7 @@ const dirs = [
   "custom",
   "data",
   "dev",
+  "downloads",
   "encoding_test",
   "ingredient",
   "ingredients",
