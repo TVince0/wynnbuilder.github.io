@@ -45,7 +45,11 @@ const OptimizerFinal = (() => {
       for (const [name, info] of defaults[0]) sliders.set(name, {slider: {value: context.sliders.get(name) ?? info.slider.value}});
       for (const [name] of defaults[1]) buttons.set(name, {button: {classList: {contains: () => context.buttons.has(name)}}});
       compiled = {merged, raw, sliders, buttons};
-      if (cache.size >= 256) cache.clear();
+      if (cache.size >= 256) cache.delete(cache.keys().next().value);
+      cache.set(key, compiled);
+    } else {
+      // Retain frequently used ability/major-ID contexts across long searches.
+      cache.delete(key);
       cache.set(key, compiled);
     }
     const {merged, raw, sliders, buttons} = compiled;

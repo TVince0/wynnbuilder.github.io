@@ -2,6 +2,7 @@ import { parentPort, workerData, Worker } from "node:worker_threads";
 import vm from "node:vm";
 import { nativeContext } from "./native.mjs";
 import { gpuProcess } from "./process.mjs";
+import { ProgressGate, RollingSet, RecentRates } from "./search_state.mjs";
 const validators = [];
 let stopped = false,
   gpu,
@@ -84,7 +85,7 @@ async function run() {
   if (stopped) return;
   const archive = new Map(),
     best = new Map(),
-    seen = new Set(),
+    seen = new RollingSet(),
     proposals = new Map();
   const start = performance.now();
   const shortlist = config.cudaShortlist || 256;
@@ -95,11 +96,19 @@ async function run() {
     cycles = 0,
     estimatedUnique = 0;
   let gpuMs = 0,
+    gpuRoundTripMs = 0,
     nativeMs = 0,
-    lastReport = 0,
     producerError,
     closest = null,
-    firstValidSeconds = null;
+    firstValidSeconds = null,
+    candidates = 0,
+    duplicates = 0,
+    duplicateAverage = 0,
+    explorationBatches = 0,
+    buildRevision = 0,
+    previousBest = "";
+  const progressGate = new ProgressGate();
+  const recent = new RecentRates(start, {tested, evaluated, candidates, duplicates});
   const identity = (tuple) => {
     const local = tuple.map((index, slot) => index - payload.offsets[slot]);
     if (config.ringSymmetric && local[4] > local[5])
@@ -127,9 +136,11 @@ async function run() {
     feasible,
     evaluated,
     estimatedUnique: Math.min(estimatedUnique, Number(payload.total)),
-    gpuMs,
+    gpuMs, gpuRoundTripMs,
     nativeMs,
-    shortlist, closest, firstValidSeconds,
+    shortlist, closest, firstValidSeconds, buildRevision,
+    rates: recent.read(performance.now(), {tested, evaluated, candidates, duplicates}),
+    pipeline: {pending:proposals.size, cacheSize:seen.size, cacheLimit:seen.capacity, cacheEvictions:seen.evictions, explorationBatches},
     guidedRules: payload.guidedRules,
     totalRules: config.rules.filter(rule => rule.min != null || rule.max != null).length,
     examined: String(tested),
@@ -138,13 +149,13 @@ async function run() {
     total: payload.total,
     builds: [...best.values()].sort(compare).slice(0, config.limit),
   });
-  const report = (force) => {
-    if (!stopped && (force || performance.now() - lastReport >= 250)) {
+  // GPU and native completions share one cap. Native micro-batches must not
+  // bypass it and flood worker/HTTP/browser queues with repeated build lists.
+  const report = () => {
+    if (!stopped && progressGate.due(performance.now()))
       parentPort.postMessage({ progress: progress() });
-      lastReport = performance.now();
-    }
   };
-  report(true);
+  report();
   // A bounded reservoir keeps native validation independent of CUDA batch size.
   function select(values, limit) {
     const half = Math.ceil(limit / 2);
@@ -164,15 +175,24 @@ async function run() {
   // Keep the GPU producer running while native validators process prior proposals.
   const producer = (async () => {
     while (!stopped) {
+      const serial = ++cycles;
+      // When reduced proposals repeat heavily, periodically explore without
+      // parents. Keep the validated archive and best builds throughout.
+      const fresh = elites.length > 0 && duplicateAverage >= .8 && serial % 4 === 0;
+      if (fresh) explorationBatches++;
+      const roundTripStart = performance.now();
       const batch = await gpu.send({
-        elites,
-        seed: (Date.now() + Math.imul(++cycles, 2654435761)) >>> 0,
+        elites: fresh ? [] : elites,
+        seed: (Date.now() + Math.imul(serial, 2654435761)) >>> 0,
       });
       if (stopped) break;
+      gpuRoundTripMs = performance.now()-roundTripStart;
       tested += batch.tested;
       feasible += batch.feasible;
       gpuMs = batch.gpuMs || 0;
       estimatedUnique = batch.estimatedUnique ?? estimatedUnique;
+      let batchDuplicates = 0;
+      candidates += batch.candidates.length;
       for (const [index, tuple] of batch.candidates.entries()) {
         const key = identity(tuple);
         if (!seen.has(key) && !proposals.has(key))
@@ -183,7 +203,10 @@ async function run() {
             violation: batch.violations?.[index] || 0,
             ticket: Math.random(),
           });
+        else batchDuplicates++;
       }
+      duplicates += batchDuplicates;
+      if (batch.candidates.length) duplicateAverage = duplicateAverage*.85 + .15*batchDuplicates/batch.candidates.length;
       if (proposals.size > capacity) {
         const retained = select([...proposals.values()], capacity);
         proposals.clear();
@@ -191,7 +214,7 @@ async function run() {
       }
       wake?.();
       wake = null;
-      report(false);
+      report();
     }
   })().catch((error) => {
     if (!stopped) producerError = error;
@@ -210,7 +233,6 @@ async function run() {
     const unique = chosen.map((row) => row.tuple);
     for (const row of chosen) {
       proposals.delete(row.key);
-      if (seen.size >= 200000) seen.clear();
       seen.add(row.key);
     }
     const chunk = Math.ceil(unique.length / count);
@@ -257,7 +279,9 @@ async function run() {
     const ranked = [...best.values()].sort(compare).slice(0, config.limit);
     best.clear();
     for (const row of ranked) best.set(row.signature, row);
-    report(true);
+    const fingerprint = JSON.stringify(ranked.map(row => [row.signature, row.score]));
+    if (fingerprint !== previousBest) {previousBest = fingerprint; buildRevision++;}
+    report();
   }
   await producer;
 }

@@ -348,7 +348,43 @@ const BuildOptimizer = (() => {
       duplicateRings: document.getElementById("optimizer-duplicates").checked,
     };
   }
-  function showProgress(data) {
+  function showClosest(data, config) {
+    const details = document.getElementById('optimizer-closest-details');
+    const candidate = data.cuda && data.closest;
+    details.hidden = !candidate;
+    if (!candidate) return;
+    const revision = JSON.stringify([candidate.signature, candidate.violation, candidate.functioning]);
+    if (details.dataset.revision === revision) return;
+    details.dataset.revision = revision;
+    document.getElementById('optimizer-closest-status').textContent = candidate.violation === 0 && candidate.functioning
+      ? 'This evaluated build meets all targets and skill requirements.'
+      : 'Diagnostic attempt: it does not meet every target or skill requirement.';
+    const pieces = document.getElementById('optimizer-closest-pieces');
+    pieces.replaceChildren(...candidate.pieces.map((piece, i) => {
+      const entry = element('li');
+      entry.append(element('strong', {}, title(slots[i])), element('span', {}, piece.name));
+      return entry;
+    }));
+    const rows = [...config.rules];
+    for (const stat of [config.objective, ...(config.secondary || []).map(rank => rank.stat)])
+      if (!rows.some(rule => rule.stat === stat)) rows.push({stat});
+    const table = document.getElementById('optimizer-closest-values');
+    const precise = value => Number.isFinite(value) ? value.toLocaleString(undefined, {maximumFractionDigits:6}) : '—';
+    table.replaceChildren(...rows.map(rule => {
+      const value = candidate.stats[rule.stat];
+      const short = !Number.isFinite(value) || (rule.min != null && value < rule.min) || (rule.max != null && value > rule.max);
+      const bounded = rule.min != null || rule.max != null;
+      const row = element('tr', {class:short ? 'optimizer-target-missed' : ''});
+      for (const text of [OptimizerModel.label(rule.stat), precise(value), precise(rule.min), precise(rule.max), bounded ? short ? 'Miss' : 'Met' : 'Rank'])
+        row.append(element('td', {}, text));
+      return row;
+    }));
+    document.getElementById('optimizer-closest-skills').textContent =
+      'Native skill check: ' + (candidate.functioning ? 'valid' : 'invalid') + ' · Assigned ' +
+      format(candidate.stats.assigned) + ' / ' + levelToSkillPoints(config.level) + ' · ' +
+      skill.map((name, i) => name + ' ' + format(candidate.assigned[i]) + '/100').join(' · ');
+  }
+  function showProgress(data, config) {
     if (!data.total || data.message) return;
     const container = document.getElementById("optimizer-progress");
     const text = document.getElementById("optimizer-progress-text");
@@ -357,6 +393,7 @@ const BuildOptimizer = (() => {
     const closest = document.getElementById("optimizer-closest");
     closest.textContent = "";
     container.hidden = false;
+    showClosest(data, config);
     const total = BigInt(data.total).toLocaleString();
     if (data.cuda) {
       const ratio = Math.min(1, (data.estimatedUnique || 0) / Math.max(1, Number(data.total)));
@@ -376,7 +413,12 @@ const BuildOptimizer = (() => {
       }
       if (data.guidedRules) closest.textContent += " GPU guidance: " + data.guidedRules.length + " / " + data.totalRules + " targets; native validation checks every target.";
       text.textContent = "Estimated GPU coverage " + count(data.estimatedUnique || 0) + " / " + total + " (" + percent + "%) · " + count(data.tested) + " proposals · " + count(data.evaluated) + " native evaluations";
-      timings.textContent = "GPU batch " + format(data.gpuMs || 0) + " ms · Native validation cycle " + format(data.nativeMs || 0) + " ms · " + count(Math.round(data.tested / Math.max(.001, data.elapsed))) + " GPU proposals/s · " + count(Math.round(data.evaluated / Math.max(.001, data.elapsed))) + " native evaluations/s";
+      const rates = data.rates;
+      timings.textContent = "GPU batch " + format(data.gpuMs || 0) + " ms" + (data.gpuRoundTripMs == null ? '' : ' (round trip ' + format(data.gpuRoundTripMs) + ' ms)') + " · Native validation cycle " + format(data.nativeMs || 0) + " ms · " +
+        (rates ? 'Recent (~2s): ' + count(Math.round(rates.gpu)) + ' GPU proposals/s · ' + count(Math.round(rates.native)) + ' native evaluations/s · ' +
+          format(rates.duplicateFraction*100) + '% GPU shortlist repeats · ' : '') +
+        'Average: ' + count(Math.round(data.tested / Math.max(.001, data.elapsed))) + ' GPU proposals/s · ' +
+        count(Math.round(data.evaluated / Math.max(.001, data.elapsed))) + ' native evaluations/s';
     } else {
       bar.hidden = !!data.fast;
       if (!data.fast) bar.value = Math.min(1, Number(data.examined) / Math.max(1, Number(data.total)));
@@ -389,6 +431,9 @@ const BuildOptimizer = (() => {
     resultBox.replaceChildren();
     results = [];
     document.getElementById("optimizer-progress").hidden = true;
+    const closestDetails = document.getElementById('optimizer-closest-details');
+    closestDetails.hidden = true;
+    delete closestDetails.dataset.revision;
     try {
       ensureReady();
       const config = readConfig();
@@ -488,15 +533,17 @@ const BuildOptimizer = (() => {
       preparedSearch = structuredClone(request);
       document.getElementById('optimizer-export-search').disabled = false;
       document.getElementById('optimizer-export-search').title = 'Export the last search’s prepared input';
+      let renderedRevision = -1;
       worker.onmessage = ({ data }) => {
         if (data.progress) {
-          showProgress(data.progress);
+          showProgress(data.progress, config);
           notice(data.progress.cuda
             ? data.progress.message || data.progress.device + " · " + count(data.progress.tested) + " GPU candidates · " + count(data.progress.evaluated) + " native evaluations · " + format(data.progress.elapsed) + "s · best found so far"
             : data.progress.fast
               ? count(data.progress.examined) + " candidates tried · " + count(data.progress.evaluated) + " fully evaluated · " + format(data.progress.elapsed) + "s · " + data.progress.workers + " workers · best found so far"
               : count(data.progress.examined) + " / " + count(data.progress.total) + " combinations considered · " + format(data.progress.elapsed) + "s · exhaustive search");
-          if (data.progress.builds) {
+          if (data.progress.builds && (data.progress.buildRevision == null || data.progress.buildRevision !== renderedRevision)) {
+            renderedRevision = data.progress.buildRevision;
             results = data.progress.builds;
             renderResults(config);
           }
@@ -506,7 +553,7 @@ const BuildOptimizer = (() => {
           notice(data.error, true);
         }
         if (data.result) {
-          showProgress(data.result);
+          showProgress(data.result, config);
           cancel();
           results = data.result.builds;
           renderResults(config);
@@ -762,7 +809,14 @@ const BuildOptimizer = (() => {
             <details class="optimizer-notes"><summary>How generic spell damage is measured</summary><p>Generic spell hit is the average damage of a 100% spell hit using the weapon’s existing elements. It combines shared raw and percentage damage, elemental bonuses, skill points, critical chance and general buffs. Individual spell conversions and bonuses are excluded. It is a comparison benchmark. Each actual spell applies its own scaling.</p></details>
             <div class="optimizer-actions"><button type="button" class="optimizer-button optimizer-primary" id="optimizer-run">Find builds <span aria-hidden="true">→</span></button><button type="button" class="optimizer-button" id="optimizer-cancel" hidden>Cancel search</button><button type="button" class="optimizer-button" id="optimizer-export-search" disabled title="Start a search to prepare its full input">Export search input</button></div>
             <p id="optimizer-message" role="status"></p>
-            <div id="optimizer-progress" hidden><progress id="optimizer-coverage" max="1" value="0" aria-label="Search coverage"></progress><p id="optimizer-progress-text"></p><p id="optimizer-timings" class="optimizer-hint"></p><p id="optimizer-closest" class="optimizer-hint" role="status"></p></div>
+            <div id="optimizer-progress" hidden><progress id="optimizer-coverage" max="1" value="0" aria-label="Search coverage"></progress><p id="optimizer-progress-text"></p><p id="optimizer-timings" class="optimizer-hint"></p><p id="optimizer-closest" class="optimizer-hint" role="status"></p>
+              <details id="optimizer-closest-details" class="optimizer-notes" hidden>
+                <summary>Closest native attempt — equipment and stats</summary>
+                <p id="optimizer-closest-status" class="optimizer-hint"></p>
+                <ul id="optimizer-closest-pieces" class="optimizer-closest-pieces"></ul>
+                <table class="optimizer-closest-table"><thead><tr><th>Stat</th><th>Value</th><th>Min</th><th>Max</th><th>Status</th></tr></thead><tbody id="optimizer-closest-values"></tbody></table>
+                <p id="optimizer-closest-skills" class="optimizer-hint"></p>
+              </details></div>
           </section>
           <section class="optimizer-result-section" aria-label="Ranked builds"><div id="optimizer-results"></div></section>
         </div>

@@ -313,6 +313,35 @@ const genericChecks = vm.runInContext(`(() => {
 assert.equal(genericChecks.base, genericChecks.specific);
 assert.ok(genericChecks.raw > genericChecks.base);
 assert.ok(genericChecks.percent > genericChecks.raw);
+// Keep a frequently used ability context hot across more than one cache capacity.
+const cacheStress=vm.runInContext(`(() => {
+  const build=build_node.get_value(),context=OptimizerFinal.snapshot(),ids=build.statMap.get('activeMajorIDs');
+  const original=atree_merge.compute_func;
+  let compiled=0,hotMisses=0;
+  atree_merge.compute_func=function(input){compiled++;return original.call(this,input);};
+  const created=[];
+  const score=id=>{
+    MAJOR_IDS[id]={abilities:[]};created.push(id);
+    build.statMap.set('activeMajorIDs',new Set([id]));
+    return OptimizerFinal.measurements(build,context,new Set(['genericSpellHit'])).genericSpellHit;
+  };
+  try {
+    const expected=score('CacheTest:hot');
+    for(let i=0;i<270;i++){
+      const value=score('CacheTest:cold:'+i),before=compiled;
+      const hot=score('CacheTest:hot');
+      if(compiled!==before)hotMisses++;
+      if(Math.abs(value-expected)>1e-8 || Math.abs(hot-expected)>1e-8)throw Error('cached damage changed');
+    }
+    return {compiled,hotMisses};
+  } finally {
+    atree_merge.compute_func=original;build.statMap.set('activeMajorIDs',ids);
+    for(const id of created)delete MAJOR_IDS[id];
+  }
+})()`,win);
+assert.equal(cacheStress.hotMisses,0,'hot contexts survive bounded LRU eviction');
+assert.equal(cacheStress.compiled,271);
+
 doc.getElementById('optimizer-add-ranking').click();
 assert.equal(doc.querySelectorAll('.optimizer-secondary-row').length, 1);
 assert.deepEqual(JSON.parse(win.localStorage.getItem('wynnbuilder.optimizer.v1')).secondary, [{stat:'health',direction:'max'}]);
@@ -370,6 +399,46 @@ assert.equal(preciseRows.length,1);
 for(const key of ['hprRaw','hprPct','regen']) assert.equal(preciseRows[0].stats[key],liveComponents[key]);
 assert.equal(preciseRows[0].score,liveComponents.hprRaw);
 assert.equal(vm.runInContext('payload.items[payload.offsets[0]][21]',preciseContext),preciseRequest.pools[0][0].map.get('maxRolls').get('hprRaw'));
+
+// Render a diagnostic CUDA attempt without treating it as a matching result.
+vm.runInContext(`
+  globalThis.savedCudaClient = OptimizerCudaClient;
+  OptimizerCudaClient = class {
+    constructor(){globalThis.testCudaClient=this;}
+    postMessage(request){this.request=request;}
+    terminate(){this.stopped=true;}
+  };
+`,win);
+doc.getElementById('optimizer-strategy').value='cuda';
+doc.getElementById('optimizer-strategy').dispatchEvent(new win.Event('change',{bubbles:true}));
+doc.getElementById('optimizer-add-rule').click();
+const diagnosticRule=doc.getElementById('optimizer-rules').lastElementChild;
+diagnosticRule.querySelector('select').value='health';
+diagnosticRule.querySelector('[data-bound=min]').value='1000000000';
+doc.getElementById('optimizer-run').click();
+const diagnostic={...structuredClone(preciseRows[0]),violation:1,
+  shortfalls:[{stat:'health',value:liveComponents.health,min:1e9,below:1e9-liveComponents.health,above:0}]};
+win.diagnosticProgress={cuda:true,phase:'searching',device:'Protocol device',total:'1',tested:4096,evaluated:1,elapsed:1,
+  estimatedUnique:1,builds:[],buildRevision:1,closest:diagnostic,firstValidSeconds:null,
+  rates:{gpu:4096,native:1,duplicateFraction:.9}};
+vm.runInContext('testCudaClient.onmessage({data:{progress:diagnosticProgress}})',win);
+assert.equal(doc.getElementById('optimizer-closest-details').hidden,false);
+assert.equal(doc.getElementById('optimizer-closest-pieces').children.length,9);
+assert.ok(doc.getElementById('optimizer-closest-pieces').textContent.includes('Third Eye'));
+assert.ok(doc.getElementById('optimizer-closest-values').textContent.includes('Miss'));
+assert.ok(doc.getElementById('optimizer-closest-status').textContent.includes('does not meet'));
+assert.equal(doc.getElementById('optimizer-closest-details').querySelector('button'),null);
+assert.equal(doc.querySelectorAll('.optimizer-result').length,0);
+assert.ok(doc.getElementById('optimizer-timings').textContent.includes('Recent (~2s)'));
+const diagnosticNode=doc.getElementById('optimizer-closest-values').firstElementChild;
+vm.runInContext('testCudaClient.onmessage({data:{progress:{...diagnosticProgress,elapsed:2}}})',win);
+assert.equal(doc.getElementById('optimizer-closest-values').firstElementChild,diagnosticNode,'unchanged diagnostics must keep their DOM');
+doc.getElementById('optimizer-cancel').click();
+assert.equal(doc.getElementById('optimizer-closest-details').hidden,false,'closest attempt survives stopping');
+diagnosticRule.querySelector('button').click();
+doc.getElementById('optimizer-strategy').value='exhaustive';
+doc.getElementById('optimizer-strategy').dispatchEvent(new win.Event('change',{bubbles:true}));
+vm.runInContext('OptimizerCudaClient=savedCudaClient',win);
 
 // Reopen the actual native share URL in a fresh document and compute graph.
 const reloaded = createWindow(win.location.href);
@@ -439,9 +508,11 @@ fs.writeFileSync(protocol, [
   "emit({'initialized':True,'device':'Protocol test device'})",
   "request=json.loads(sys.stdin.readline())",
   "emit({'ready':True,'device':'Protocol test device'})",
+  "serial=0",
   "for line in sys.stdin:",
-  " json.loads(line);time.sleep(.02)",
-  " emit({'tested':4096,'feasible':1,'candidates':[request['offsets']],'proxyScores':[1.0],'estimatedUnique':1,'gpuMs':.1})",
+  " json.loads(line);time.sleep(.002 if request['sizes'][0]>1 else .02)",
+  " indices=list(request['offsets']);indices[0]+=serial%request['sizes'][0];serial+=1",
+  " emit({'tested':4096,'feasible':1,'candidates':[indices],'proxyScores':[1.0],'estimatedUnique':1,'gpuMs':.1})",
 ].join("\n"));
 const cudaServer = spawn(process.execPath,[path.join(project,"scripts/serve.mjs"),root],{
   env:{...process.env,PORT:"0",WYNN_CUDA_WORKER_SCRIPT:protocol},stdio:["ignore","pipe","inherit"],
@@ -483,6 +554,7 @@ try {
   }
   assert.equal(running.estimatedUnique,1);
   assert.ok(running.firstValidSeconds >= 0);
+  assert.ok(running.gpuRoundTripMs>0);
   assert.equal(running.closest.functioning,true);
   assert.deepEqual(running.closest.shortfalls,[]);
   assert.ok(BigInt(running.total)>=1n);
@@ -507,6 +579,28 @@ try {
   }
   assert.ok(closest.shortfalls.some(gap=>gap.stat==='health'&&gap.above>0));
   missController.abort();await sleep(250);
+  // Rapid singleton native batches used to bypass the progress throttle.
+  const stressRequest=structuredClone(request);
+  stressRequest.pools[0]=Array.from({length:200},(_,i)=>({...request.pools[0][0],key:'stress-'+i}));
+  const stressController=new AbortController();
+  const stress=await fetch(origin+'/api/cuda/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(stressRequest,encode),signal:stressController.signal});
+  const stressReader=stress.body.getReader(),stressDecoder=new TextDecoder();
+  let stressBuffer='',updates=0,lastProgress;
+  while(!lastProgress || lastProgress.elapsed<2){
+    const {value,done}=await stressReader.read();assert.ok(!done);
+    stressBuffer+=stressDecoder.decode(value,{stream:true});let newline;
+    while((newline=stressBuffer.indexOf('\n'))>=0){
+      const event=JSON.parse(stressBuffer.slice(0,newline));stressBuffer=stressBuffer.slice(newline+1);
+      assert.ok(!event.error,event.error);
+      if(event.progress?.phase==='searching'){updates++;lastProgress=event.progress;}
+    }
+  }
+  assert.ok(lastProgress.evaluated>=20,'exercise many native completions');
+  assert.ok(updates<=Math.ceil(lastProgress.elapsed*4)+2,'native updates must share the 4Hz cap: '+updates);
+  assert.ok(lastProgress.rates.gpu>0);
+  assert.ok(lastProgress.pipeline.cacheSize<=lastProgress.pipeline.cacheLimit);
+  console.log('CUDA steady progress:',updates,'updates over',lastProgress.elapsed.toFixed(2),'seconds;',lastProgress.evaluated,'native evaluations');
+  stressController.abort();await sleep(250);
   fs.writeFileSync(protocol.replace(/\.py$/, ".fail"), "");
   const failedSearch = await send();
   const failedEvents = (await failedSearch.text()).trim().split("\n").map(line => JSON.parse(line));
