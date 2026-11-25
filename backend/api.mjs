@@ -37,6 +37,10 @@ function validate(request) {
     throw Error("Invalid or oversized CUDA item pools.");
   const config = request.config;
   if (config) config.cudaShortlist ??= 256;
+  if(config?.seedBuilds!=null && (!Array.isArray(config.seedBuilds)||config.seedBuilds.length>8||config.seedBuilds.some(seed=>!Array.isArray(seed)||seed.length!==9||seed.some(key=>typeof key!=='string'))))
+    throw Error('Starting builds must contain up to eight arrays of nine item keys.');
+  for(const key of ['repairSeeds','excludeCrafted','excludeGuildTome'])
+    if(config?.[key]!=null && typeof config[key]!=='boolean')throw Error('Invalid repair option: '+key);
   if (
     !config ||
     !Number.isInteger(config.level) ||

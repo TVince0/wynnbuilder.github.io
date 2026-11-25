@@ -65,13 +65,23 @@ Choose **CPU exhaustive search** for a full ranking proof over a restricted pool
 All modes cache ability structure by class and active major IDs within a search. Only spells needed by the targets or rankings are evaluated. Generic spell ranking skips individual spell damage calculations. The CPU modes use browser Web Workers. CUDA mode uses the local backend and native Node worker threads.
 
 
-Before the first matching build, the progress panel reports the closest native-evaluated attempt and which targets or skill caps it still misses. Expand **Closest native attempt — equipment and stats** to see its nine pieces, actual target/ranking values, bounds and manual skill-point allocation. It stays visible after stopping. These diagnostic states cannot be applied as functioning results. After a match, it reports time to the first matching build. The guidance target count shows which constraints influence GPU fitness; every target still receives native validation. Coverage measures exploration of the combination space, and cannot predict time to a matching build or prove that no match exists.
+Before the first matching build, the progress panel reports the closest native-evaluated attempt and which stat targets it still misses. Expand **Closest native attempt — equipment and stats** to see its nine pieces, actual target/ranking values, bounds and manual skill-point allocation. It stays visible after stopping. These skill-valid diagnostic states can miss stat targets and cannot be applied as matching results. After a match, it reports time to the first matching build. The guidance target count shows which constraints influence GPU fitness; every target still receives native validation. Coverage measures exploration of the combination space, and cannot predict time to a matching build or prove that no match exists.
 
 Progress updates are capped at four per second across both GPU and native completions. Recent (~2-second) rates and lifetime averages are separate, and a GPU-shortlist repeat percentage helps distinguish slower execution from repeatedly proposing familiar builds. High repetition triggers periodic fresh GPU batches while retaining the best validated builds. Deduplication and ability contexts use bounded rolling/LRU caches.
 
 The progress panel remains visible after stopping. CUDA displays estimated distinct GPU combinations checked out of the allowed total, alongside raw proposals and native evaluations. Sampling can revisit candidates, so the coverage estimate differs from the raw proposal counter. CUDA batches run continuously while a separate bounded shortlist is evaluated natively. Batch size and native shortlist size can be tuned independently. Full final calculations remain CPU work.
 
 After starting a search, **Export search input** downloads its prepared candidate pools, exact rolled/powdered values, selected tomes, ability/buff state, bounds and rankings as `wynnbuilder-search.json`. This is a reproducible diagnostic snapshot of that search. It is separate from the candidate-name import format below.
+
+## Repair shared builds
+
+Expand **Repair shared builds / starting builds**, paste a WynnBuilder share link, and choose **Load share link**. The native decoder loads the source tree, powders, aspects and data version on this local site. Its gear is saved as a starting example. Targets, rankings, owned locks/actual rolls and your imported item pool are retained. You can also save the currently open build. Up to eight class/version-compatible examples are retained in this browser.
+
+Enable **Systematic nearby-build repair (CUDA)** to prioritize unique one-piece swaps and bounded two-piece repairs alongside global GPU exploration. This option is enabled by default. Choose **No guild tome**, **Exclude crafted gear**, or **Require HP Regen (Final) ≥ 0** as needed. A stricter existing regen minimum remains in force. Unlock crafted pieces if they conflict with the crafted exclusion.
+
+The displayed closest attempt always passes skill-point validity and receives full native scoring. Skill-invalid combinations stay internal and skip the full ability graph. If none is skill-valid yet, no closest build is displayed. The target table can still show unmet stat bounds on a skill-valid closest attempt.
+
+See [search strategy, reference projects and remaining limitations](docs/SEARCH_DESIGN.md). In particular, the search still leaves spare skill points unassigned; optimizing those points is a remaining search dimension.
 
 ## Candidate JSON
 

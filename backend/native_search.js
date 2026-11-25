@@ -207,15 +207,22 @@ const OptimizerCuda = (() => {
         + build.base_skillpoints.reduce((sum, value) => sum + Math.max(0, value - 100), 0);
       // Retain near-feasible states so two-piece repairs can cross skill gaps.
       if (!functioning && skillError === 0) continue;
-      const stats = OptimizerFinal.measurements(
-        build,
-        config.finalContext,
-        requested,
-      );
+      let stats;
+      if(functioning){
+        stats = OptimizerFinal.measurements(build,config.finalContext,requested);
+      }else{
+        // Illegal equipment allocations cannot produce an accepted result.
+        // Retain cheap aggregate guidance without running the full ability graph.
+        const baseStats=new Map(build.statMap);
+        skp_order.forEach((key,i)=>baseStats.set(key,build.total_skillpoints[i]));
+        baseStats.set('classDef',classDefenseMultipliers.get(build.weapon.statMap.get('type')));
+        stats=OptimizerFinal.values(build,baseStats,new Map(),requested);
+        for(const key of requested)if(!Number.isFinite(stats[key]))stats[key]=0;
+      }
       if (keys.some((key) => !Number.isFinite(stats[key]))) continue;
       const shortfalls = [];
       if (skillError > 0) shortfalls.push({stat:'assigned', value:build.assigned_skillpoints, skillError});
-      let violation = skillError / Math.max(1, levelToSkillPoints(config.level));
+      let violation = (functioning?0:1) + skillError / Math.max(1, levelToSkillPoints(config.level));
       for (const rule of config.rules || []) {
         const value = stats[rule.stat];
         if (!Number.isFinite(value)) {
@@ -234,7 +241,7 @@ const OptimizerCuda = (() => {
       output.push({
         signature: JSON.stringify(identity),
         indices: tuple,
-        violation, functioning, shortfalls,
+        violation, functioning, shortfalls, evaluationStage:functioning?'full-native':'skill-only',
         score: stats[config.objective],
         stats,
         assigned: build.base_skillpoints,

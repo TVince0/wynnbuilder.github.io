@@ -2,6 +2,7 @@
 const BuildOptimizer = (() => {
   const slots = OptimizerModel.slots;
   const stateKey = "wynnbuilder.optimizer.v1";
+  const pendingRepairKey = 'wynnbuilder.optimizer.pendingRepair.v1';
   const overrides = new Map();
   let preparedSearch = null;
   let mode = "optimistic",
@@ -15,6 +16,7 @@ const BuildOptimizer = (() => {
   } catch {
     saved = {};
   }
+  let seedBuilds = Array.isArray(saved.seeds) ? saved.seeds.filter(seed=>Array.isArray(seed.pieces)&&seed.pieces.length===9).slice(-8) : [];
   function element(tag, attrs = {}, text) {
     const node = document.createElement(tag);
     for (const [key, value] of Object.entries(attrs)) {
@@ -40,7 +42,11 @@ const BuildOptimizer = (() => {
   }
   function persist() {
     const value = {
-      mode,
+      mode, seeds:seedBuilds,
+      repairSeeds: document.getElementById('optimizer-repair-seeds')?.checked || false,
+      excludeCrafted: document.getElementById('optimizer-no-crafted')?.checked || false,
+      excludeGuildTome: document.getElementById('optimizer-no-guild')?.checked || false,
+      nonnegativeRegen: document.getElementById('optimizer-positive-regen')?.checked || false,
       cudaConfigured: true,
       cudaBlocks: document.getElementById("optimizer-cuda-blocks").value,
       strategy: document.getElementById("optimizer-strategy").value,
@@ -297,8 +303,81 @@ const BuildOptimizer = (() => {
     const node = powder_nodes.find((node) => node.name === slot + "-powder");
     return node?.get_value() || [];
   }
+  function updateSeeds() {
+    const currentClass=wep_to_class.get(item_final_nodes[8]?.get_value()?.statMap.get('type'));
+    const compatible=seedBuilds.filter(seed=>seed.version===wynn_version_id&&seed.characterClass===currentClass).length;
+    document.getElementById('optimizer-seed-count').textContent = seedBuilds.length + ' saved starting builds · '+compatible+' match this class/data version';
+    document.getElementById('optimizer-seed-clear').disabled = !seedBuilds.length;
+  }
+  function captureSeed(label) {
+    ensureReady();
+    const pieces=item_final_nodes.slice(0,9).map((node,i)=>{
+      const item=node.get_value();
+      if(!item||item.statMap.has('NONE'))throw Error('Equip all nine pieces before saving a starting build.');
+      const map=item.statMap;
+      return {key:map.get('crafted')||map.get('custom')?'@'+field(slots[i]).value:map.get('name'),
+        name:map.get('displayName'),features:OptimizerModel.seedFeatures(map)};
+    });
+    const seed={label:label||pieces[8].name+' build',version:wynn_version_id,
+      characterClass:wep_to_class.get(item_final_nodes[8].get_value().statMap.get('type')),pieces};
+    const signature=JSON.stringify(seed.pieces.map(piece=>piece.key));
+    seedBuilds=seedBuilds.filter(old=>old.version!==seed.version||JSON.stringify(old.pieces.map(piece=>piece.key))!==signature);
+    seedBuilds.push(seed);seedBuilds=seedBuilds.slice(-8);updateSeeds();persist();return seed;
+  }
+  function repairLink(raw, navigate = true) {
+    const source=new URL(raw.trim(),location.href);
+    if(!['http:','https:'].includes(source.protocol)||source.hash.length<2||source.hash.length>65536||!/^#[A-Za-z0-9+_$-]+$/.test(source.hash))
+      throw Error('Paste a WynnBuilder share link with a build hash.');
+    const target=new URL(location.pathname,location.href);
+    for(const key of ['v','optimizer'])if(source.searchParams.has(key))target.searchParams.set(key,source.searchParams.get(key));
+    if(!target.searchParams.has('optimizer'))target.searchParams.set('optimizer',JSON.stringify({v:1,mode,owned:{}}));
+    target.hash=source.hash;
+    const token=Date.now().toString(36)+Math.random().toString(36).slice(2);
+    target.searchParams.set('optimizerRepair',token);
+    const locked=slots.filter(slot=>document.getElementById('optimizer-lock-'+slot).checked).map(slot=>({slot,value:field(slot).value,owned:overrides.get(slot)}));
+    persist();
+    localStorage.setItem(pendingRepairKey,JSON.stringify({url:target.href,token,locked,pool:currentPool?[...currentPool]:null,
+      excludeCrafted:document.getElementById('optimizer-no-crafted').checked,
+      excludeGuildTome:document.getElementById('optimizer-no-guild').checked,
+      nonnegativeRegen:document.getElementById('optimizer-positive-regen').checked}));
+    if(navigate)location.assign(target.href);
+    return target.href;
+  }
+  function consumeRepair() {
+    const text=localStorage.getItem(pendingRepairKey);if(!text)return;
+    localStorage.removeItem(pendingRepairKey);
+    try {
+      const pending=JSON.parse(text);
+      const params=new URLSearchParams(location.search);
+      if(params.get('optimizerRepair')!==pending.token)throw Error('The pending repair link did not match this loaded build.');
+      params.delete('optimizerRepair');
+      history.replaceState(null,'',location.pathname+(params.size?'?'+params:'')+location.hash);
+      captureSeed('Shared '+(item_final_nodes[8].get_value()?.statMap.get('displayName')||'build'));
+      for(const entry of pending.locked||[]){
+        if(!slots.includes(entry.slot))continue;
+        field(entry.slot).value=entry.value;
+        if(entry.owned)overrides.set(entry.slot,entry.owned);
+        document.getElementById('optimizer-lock-'+entry.slot).checked=true;
+      }
+      for(const [id,key] of [['optimizer-no-crafted','excludeCrafted'],['optimizer-no-guild','excludeGuildTome'],['optimizer-positive-regen','nonnegativeRegen']])
+        document.getElementById(id).checked=!!pending[key];
+      document.getElementById('optimizer-repair-seeds').checked=true;
+      if(pending.pool)importPool(pending.pool);
+      refreshBuild();
+      notice('Shared build loaded and saved as a starting point. Targets and locked owned pieces are retained. Choose restrictions, then Find builds.');
+    }catch(error){notice(error.message,true);}
+  }
+  function clearGuildTome() {
+    if(!document.getElementById('optimizer-no-guild').checked)return;
+    const input=field('guildTome1');
+    if(input?.value){input.value='';for(const node of equip_inputs.slice(9))node.mark_dirty();for(const node of equip_inputs.slice(9))node.update();}
+  }
   function readConfig() {
     const rules = readRules();
+    if(document.getElementById('optimizer-positive-regen').checked){
+      const rule=rules.find(rule=>rule.stat==='regen');
+      if(rule)rule.min=Math.max(0,rule.min??0);else rules.push({stat:'regen',min:0,max:null});
+    }
     if (
       rules.some(
         (r) =>
@@ -334,6 +413,9 @@ const BuildOptimizer = (() => {
     const cudaBlocks = Number(document.getElementById("optimizer-cuda-blocks").value);
     return {
       strategy, workers, cudaBlocks,
+      repairSeeds:document.getElementById('optimizer-repair-seeds').checked,
+      excludeCrafted:document.getElementById('optimizer-no-crafted').checked,
+      excludeGuildTome:document.getElementById('optimizer-no-guild').checked,
       cudaShortlist: Number(document.getElementById("optimizer-cuda-shortlist").value),
       rules,
       secondary: readSecondary(),
@@ -350,7 +432,7 @@ const BuildOptimizer = (() => {
   }
   function showClosest(data, config) {
     const details = document.getElementById('optimizer-closest-details');
-    const candidate = data.cuda && data.closest;
+    const candidate = data.cuda && data.closest?.functioning && data.closest;
     details.hidden = !candidate;
     if (!candidate) return;
     const revision = JSON.stringify([candidate.signature, candidate.violation, candidate.functioning]);
@@ -358,7 +440,7 @@ const BuildOptimizer = (() => {
     details.dataset.revision = revision;
     document.getElementById('optimizer-closest-status').textContent = candidate.violation === 0 && candidate.functioning
       ? 'This evaluated build meets all targets and skill requirements.'
-      : 'Diagnostic attempt: it does not meet every target or skill requirement.';
+      : 'Skill-valid diagnostic build: some stat targets are not met.';
     const pieces = document.getElementById('optimizer-closest-pieces');
     pieces.replaceChildren(...candidate.pieces.map((piece, i) => {
       const entry = element('li');
@@ -402,15 +484,16 @@ const BuildOptimizer = (() => {
       const coverage = "Coverage measures exploration, not time to a matching build.";
       if (data.firstValidSeconds != null) {
         closest.textContent = "First matching build after " + format(data.firstValidSeconds) + "s. " + coverage;
-      } else if (data.closest) {
+      } else if (data.closest?.functioning) {
         const gaps = (data.closest.shortfalls || []).map(gap => gap.skillError
           ? "Skill points: " + format(gap.skillError) + " excess points"
           : OptimizerModel.label(gap.stat) + " " + format(gap.value) +
             (gap.below ? " (needs ≥ " + format(gap.min) + ")" : " (needs ≤ " + format(gap.max) + ")"));
         closest.textContent = "Closest native attempt · " + (gaps.join(" · ") || "Checking targets…") + ". " + coverage;
       } else {
-        closest.textContent = "Searching for a functioning build that meets all targets. " + coverage;
+        closest.textContent = 'No skill-valid native attempt has been scored yet. Infeasible repair states stay internal. ' + coverage;
       }
+      if(data.repair)closest.textContent += ' Systematic repair: '+count(data.repair.evaluated)+' native checks, '+count(data.repair.pending)+' queued neighbors.';
       if (data.guidedRules) closest.textContent += " GPU guidance: " + data.guidedRules.length + " / " + data.totalRules + " targets; native validation checks every target.";
       text.textContent = "Estimated GPU coverage " + count(data.estimatedUnique || 0) + " / " + total + " (" + percent + "%) · " + count(data.tested) + " proposals · " + count(data.evaluated) + " native evaluations";
       const rates = data.rates;
@@ -435,6 +518,7 @@ const BuildOptimizer = (() => {
     closestDetails.hidden = true;
     delete closestDetails.dataset.revision;
     try {
+      clearGuildTome();
       ensureReady();
       const config = readConfig();
       const rarity = document.getElementById("optimizer-rarity").value;
@@ -442,6 +526,7 @@ const BuildOptimizer = (() => {
         (record) =>
           !none_items.includes(record) &&
           record.remapID === undefined &&
+          (!config.excludeCrafted || record.tier !== 'Crafted') &&
           (!currentPool || currentPool.has(record.name)) &&
           (record.lvl || 0) >= config.minLevel &&
           (record.lvl || 0) <= config.level &&
@@ -462,6 +547,7 @@ const BuildOptimizer = (() => {
             );
           // Reuse native powder and custom/crafted handling for a pinned piece.
           const prepared = item_final_nodes[i].get_value();
+          if(config.excludeCrafted && prepared.statMap.get('crafted'))throw Error('Unlock the crafted '+title(slot)+' piece or disable Exclude crafted gear.');
           return [
             {
               key:
@@ -507,9 +593,22 @@ const BuildOptimizer = (() => {
         !document.getElementById("optimizer-lock-ring2").checked &&
         JSON.stringify(powderFor("ring1")) === JSON.stringify(powderFor("ring2"));
       config.initial = slots.map((slot, index) => {
-        const name = equip_inputs[index].get_value()?.statMap.get("name");
-        return pools[index].find(entry => entry.key === name)?.key || pools[index][0].key;
+        const current=equip_inputs[index].get_value()?.statMap;
+        const name=current?.get('crafted')||current?.get('custom')?'@'+field(slot).value:current?.get('name');
+        const existing=pools[index].find(entry => entry.key === name);if(existing)return existing.key;
+        if(config.repairSeeds&&current&&!current.has('NONE')){
+          const features=OptimizerModel.seedFeatures(item_final_nodes[index].get_value().statMap);
+          return pools[index].reduce((best,entry)=>OptimizerModel.seedDistance(entry.map,features)<OptimizerModel.seedDistance(best.map,features)?entry:best,pools[index][0]).key;
+        }
+        return pools[index][0].key;
       });
+      config.initialComplete = slots.every((_,i)=>{const item=equip_inputs[i].get_value();return item&&!item.statMap.has('NONE');});
+      config.seedBuilds = config.repairSeeds ? seedBuilds.filter(seed=>seed.version===wynn_version_id&&seed.characterClass===config.characterClass).map(seed=>seed.pieces.map((piece,slot)=>{
+        const pool=pools[slot];
+        if(pool.length===1&&pool[0].pinned)return pool[0].key;
+        const existing=pool.find(entry=>entry.key===piece.key);if(existing)return existing.key;
+        return pool.reduce((best,entry)=>OptimizerModel.seedDistance(entry.map,piece.features)<OptimizerModel.seedDistance(best.map,piece.features)?entry:best,pool[0]).key;
+      })) : [];
       worker = config.strategy === "cuda" ? new OptimizerCudaClient() : new OptimizerPool(
         new URL(
           "worker.js",
@@ -644,6 +743,7 @@ const BuildOptimizer = (() => {
     }
   }
   function applyResult(result) {
+    clearGuildTome();
     // Data and selected tomes may change while results are visible.
     if (worker) {
       cancel();
@@ -794,6 +894,16 @@ const BuildOptimizer = (() => {
             <p class="optimizer-hint" id="optimizer-search-help">Search runs until you stop it. Every returned result is validated. Global optimality is unproven.</p>
           </section>
           <section class="optimizer-card">
+            <details class="optimizer-notes optimizer-seed-panel"><summary>Repair shared builds / starting builds</summary>
+              <p class="optimizer-hint">Load a WynnBuilder link through the native editor, then repair its equipment under your targets. The current editor's tree and buff settings are used. Locked owned pieces stay fixed.</p>
+              <label>WynnBuilder share link<input id="optimizer-seed-link" class="optimizer-input" type="url" placeholder="https://wynnbuilder.github.io/builder/#…"></label>
+              <div class="optimizer-actions"><button type="button" class="optimizer-button" id="optimizer-seed-load">Load share link</button><button type="button" class="optimizer-button" id="optimizer-seed-current">Save current build as starting point</button><button type="button" class="optimizer-button" id="optimizer-seed-clear">Clear saved starts</button></div>
+              <p id="optimizer-seed-count" class="optimizer-hint"></p>
+              <label class="optimizer-check"><input type="checkbox" id="optimizer-repair-seeds">Systematic nearby-build repair (CUDA)</label>
+              <label class="optimizer-check"><input type="checkbox" id="optimizer-no-crafted">Exclude crafted gear</label>
+              <label class="optimizer-check"><input type="checkbox" id="optimizer-no-guild">No guild tome (clears the selected guild tome)</label>
+              <label class="optimizer-check"><input type="checkbox" id="optimizer-positive-regen">Require HP Regen (Final) ≥ 0</label>
+            </details>
             <div class="optimizer-heading"><h2>Stat targets</h2><button type="button" class="optimizer-button" id="optimizer-add-rule">+ Add target</button></div>
             <p class="optimizer-hint">Combine final outputs with individual raw or percentage stats. For example, target HP Regen (Final), HP Regen (Raw), and HP Regen % independently.</p>
             <div class="optimizer-rule optimizer-rule-labels" aria-hidden="true"><span>Stat</span><span>Minimum</span><span>Maximum</span></div>
@@ -1021,7 +1131,14 @@ const BuildOptimizer = (() => {
       resultBox.replaceChildren();
       setTimeout(updateMetrics, 600);
     });
+    for(const [id,key] of [['optimizer-repair-seeds','repairSeeds'],['optimizer-no-crafted','excludeCrafted'],['optimizer-no-guild','excludeGuildTome'],['optimizer-positive-regen','nonnegativeRegen']])
+      document.getElementById(id).checked=key==='repairSeeds'?saved[key]!==false:!!saved[key];
+    document.getElementById('optimizer-seed-current').onclick=()=>{try{captureSeed();document.getElementById('optimizer-repair-seeds').checked=true;persist();notice('Starting build saved. Unlocked pieces can be replaced; owned locks are retained.');}catch(error){notice(error.message,true);}};
+    document.getElementById('optimizer-seed-clear').onclick=()=>{seedBuilds=[];updateSeeds();persist();};
+    document.getElementById('optimizer-seed-load').onclick=()=>{try{repairLink(document.getElementById('optimizer-seed-link').value);}catch(error){notice(error.message,true);}};
+    updateSeeds();
     if (mode !== "optimistic" || overrides.size) refreshBuild();
+    consumeRepair();
   }
   // A link's scenario and owned values take precedence over local preferences.
   try {
@@ -1054,6 +1171,7 @@ const BuildOptimizer = (() => {
     resolveItem,
     queryString,
     importPool,
+    repairLink,
     search,
     cancel,
     reset() {

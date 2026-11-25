@@ -37,12 +37,13 @@ function prepareOptimizerRequest(data) {
     powder_special_input.value = context.powders;
   }
   const pools = data.pools.map((pool) =>
-    pool.map((entry) => ({
+    pool.filter(entry=>!data.config.excludeCrafted||(!entry.map.get('crafted')&&entry.map.get('tier')!=='Crafted')).map((entry) => ({
       ...entry,
       item: OptimizerModel.fromMap(entry.map),
     })),
   );
-  const tomes = data.tomes.map(OptimizerModel.fromMap);
+  if(pools.some(pool=>!pool.length))throw Error('No eligible items remain after excluding crafted gear.');
+  const tomes = data.tomes.map(OptimizerModel.fromMap).filter(item=>!data.config.excludeGuildTome||item.statMap.get('type')!=='guildTome');
   return { pools, tomes, config: data.config };
 }
 const migrants = [];

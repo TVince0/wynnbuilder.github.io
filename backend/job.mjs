@@ -3,6 +3,7 @@ import vm from "node:vm";
 import { nativeContext } from "./native.mjs";
 import { gpuProcess } from "./process.mjs";
 import { ProgressGate, RollingSet, RecentRates } from "./search_state.mjs";
+import { NeighborhoodQueue, guide } from './neighborhood.mjs';
 const validators = [];
 let stopped = false,
   gpu,
@@ -56,6 +57,7 @@ async function run() {
   const request = workerData;
   const context = nativeContext(request);
   const payload = structuredClone(vm.runInContext("payload", context));
+  const poolKeys = structuredClone(vm.runInContext('prepared.pools.map(pool=>pool.map(entry=>entry.key))',context));
   if (payload.total === "0")
     throw Error("The current ring selections allow no candidate combinations.");
   const compare = vm.runInContext(
@@ -106,7 +108,12 @@ async function run() {
     duplicateAverage = 0,
     explorationBatches = 0,
     buildRevision = 0,
-    previousBest = "";
+    previousBest = "",
+    bestGuideViolation = Infinity,
+    nativeSkillValid = 0,
+    systematicEvaluations = 0;
+  const local = config.repairSeeds ? new NeighborhoodQueue(payload) : null;
+  const seeds = [];
   const progressGate = new ProgressGate();
   const recent = new RecentRates(start, {tested, evaluated, candidates, duplicates});
   const identity = (tuple) => {
@@ -117,13 +124,22 @@ async function run() {
   };
   const indicesFor = (pieces) =>
     pieces.map((piece, slot) => {
-      const index = request.pools[slot].findIndex(
-        (entry) => entry.key === piece.key,
-      );
+      const index = poolKeys[slot].indexOf(piece.key);
       return index < 0 ? undefined : payload.offsets[slot] + index;
     });
   let elites = [];
-  if (config.initial) {
+  const suppliedStarts=[...(config.seedBuilds||[])];
+  if(config.repairSeeds && config.initialComplete && config.initial)suppliedStarts.unshift(config.initial);
+  for(const keys of suppliedStarts){
+    if(!Array.isArray(keys)||keys.length!==9)continue;
+    const tuple=indicesFor(keys.map(key=>({key})));
+    if(tuple.every(index=>index!==undefined)&&!seeds.some(row=>identity(row.tuple)===identity(tuple))){
+      const estimate=guide(payload,tuple);
+      seeds.push({key:identity(tuple),tuple,source:'seed',proxy:estimate.score,violation:-1});
+      elites.push(tuple);
+    }
+  }
+  if (!elites.length && config.initial) {
     const initial = indicesFor(config.initial.map((key) => ({ key })));
     if (initial.every((index) => index !== undefined)) elites.push(initial);
   }
@@ -138,7 +154,8 @@ async function run() {
     estimatedUnique: Math.min(estimatedUnique, Number(payload.total)),
     gpuMs, gpuRoundTripMs,
     nativeMs,
-    shortlist, closest, firstValidSeconds, buildRevision,
+    shortlist, closest, firstValidSeconds, buildRevision, nativeSkillValid,
+    repair:local?{evaluated:systematicEvaluations,expanded:local.expanded.size,pending:Math.max(0,local.rows.length-local.cursor),seeds:seeds.length}:null,
     rates: recent.read(performance.now(), {tested, evaluated, candidates, duplicates}),
     pipeline: {pending:proposals.size, cacheSize:seen.size, cacheLimit:seen.capacity, cacheEvictions:seen.evictions, explorationBatches},
     guidedRules: payload.guidedRules,
@@ -223,14 +240,19 @@ async function run() {
   });
   while (!stopped) {
     if (producerError) throw producerError;
-    if (!proposals.size) {
+    if (!proposals.size && !seeds.length && !local?.hasWork) {
       await new Promise((resolve) => {
         wake = resolve;
       });
       continue;
     }
-    const chosen = select([...proposals.values()], shortlist);
+    const chosen=seeds.splice(0,shortlist).filter(row=>!seen.has(row.key));
+    if(local)chosen.push(...local.take(Math.max(0,Math.min(shortlist-chosen.length,proposals.size?Math.ceil(shortlist/2):shortlist)),seen));
+    const chosenKeys=new Set(chosen.map(row=>row.key));
+    chosen.push(...select([...proposals.values()].filter(row=>!chosenKeys.has(row.key)&&!seen.has(row.key)),shortlist-chosen.length));
+    if(!chosen.length){await new Promise(resolve=>setTimeout(resolve,0));continue;}
     const unique = chosen.map((row) => row.tuple);
+    systematicEvaluations+=chosen.filter(row=>row.source==='seed'||row.source==='local').length;
     for (const row of chosen) {
       proposals.delete(row.key);
       seen.add(row.key);
@@ -248,6 +270,13 @@ async function run() {
     for (const { rows } of responses)
       for (const row of rows) {
         archive.set(row.signature, row);
+        if(row.functioning){
+          nativeSkillValid++;
+          if(!closest||row.violation<closest.violation||(row.violation===closest.violation&&compare(row,closest)<0)){
+            closest=row;local?.offer(row);
+          }
+        }
+        if(row.violation<bestGuideViolation){bestGuideViolation=row.violation;local?.offer(row);}
         if (row.violation === 0 && row.functioning) {
           best.set(row.signature, row);
           firstValidSeconds ??= (performance.now() - start) / 1000;
@@ -275,7 +304,8 @@ async function run() {
     archive.clear();
     for (const row of population) archive.set(row.signature, row);
     elites = population.map((row) => row.indices);
-    closest = population[0] || closest;
+    // Only skill-valid native rows may be presented as the closest attempt.
+    // Infeasible parents remain internal repair hints.
     const ranked = [...best.values()].sort(compare).slice(0, config.limit);
     best.clear();
     for (const row of ranked) best.set(row.signature, row);

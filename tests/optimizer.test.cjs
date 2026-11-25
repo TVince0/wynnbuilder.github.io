@@ -451,7 +451,9 @@ test('CUDA guidance compiles arbitrary additive and derived targets and retains 
     const config={level:106,characterClass:'Mage',objective:'sdRaw',direction:'max',duplicateRings:true,
       rules:[{stat:'hprRaw',min:30},{stat:'hprPct',min:-100},{stat:'regen',min:30},{stat:'manaRegen',min:10},{stat:'maxManaTotal',min:115},{stat:'genericSpellHit',min:3000},{stat:'spell:3:Unknown',min:1}]};
     const prepared={pools,tomes:[],config},payload=OptimizerCuda.pack(prepared);
-    globalThis.OptimizerFinal={measurements:build=>({...OptimizerModel.measurements(build),'spell:3:Unknown':1,genericSpellHit:4000})};
+    globalThis.OptimizerFinal={
+      measurements:()=>{throw Error('Full ability graph must not run for illegal skill allocations');},
+      values:build=>({...OptimizerModel.measurements(build),'spell:3:Unknown':1,genericSpellHit:4000})};
     return {payload,row:OptimizerCuda.evaluateBatch(prepared,payload,[payload.offsets])[0]};
   })()`);
   assert.deepEqual(Array.from(result.payload.guidedRules),['hprRaw','hprPct','regen','manaRegen','maxManaTotal','genericSpellHit']);
@@ -460,6 +462,7 @@ test('CUDA guidance compiles arbitrary additive and derived targets and retains 
   assert.equal(result.payload.ruleFeatures[0][1],50);
   assert.equal(result.payload.rules[1][1],-100);
   assert.equal(result.row.functioning,false);
+  assert.equal(result.row.evaluationStage,'skill-only');
   assert.ok(result.row.violation>0);
   assert.ok(result.row.shortfalls.some(gap=>gap.skillError>0));
 });
@@ -554,4 +557,60 @@ test('elemental CUDA damage guidance matches native unbuffed generic spell hits 
     const actual=run.stdout.trim().split(/\s+/).map(Number);
     for(let i=0;i<cases.length;i++)assert.ok(Math.abs(actual[i]-cases[i].expected)<1e-7,cases[i].name+' '+cases[i].sign+': '+actual[i]+' vs '+cases[i].expected);
   }finally{fs.rmSync(directory,{recursive:true,force:true});}
+});
+
+test('systematic neighborhoods include coupled skill repairs and do not revisit checked tuples', async () => {
+  const {neighborhood,NeighborhoodQueue,tupleKey,guide}=await import('../backend/neighborhood.mjs');
+  const c=context();vm.runInContext(fs.readFileSync(path.join(root,'backend/native_search.js'),'utf8'),c.ctx);
+  const data=structuredClone(c.eval(`(() => {
+    const pools=emptyEquipment().concat([weapon()]).map(item=>[{key:item.statMap.get('name'),item}]);
+    pools[0].push({key:'a',item:fixture('helmet','a',{strReq:120,dex:100,hp:500})});
+    pools[1].push({key:'b',item:fixture('chestplate','b',{dexReq:120,str:100,hp:500})});
+    const config={level:106,objective:'health',direction:'max',duplicateRings:true,rules:[{stat:'health',min:1535}]};
+    return {payload:OptimizerCuda.pack({pools,tomes:[],config})};
+  })()`));
+  const p=data.payload,anchor={indices:p.offsets,stats:{health:535}};
+  const rows=neighborhood(p,anchor);
+  const pair=rows.find(row=>row.tuple[0]===p.offsets[0]+1&&row.tuple[1]===p.offsets[1]+1);
+  assert.ok(pair,'coupled two-piece support is considered even when single swaps fail');
+  assert.equal(pair.violation,0);
+  assert.equal(guide(p,pair.tuple).skillError,0);
+  const queue=new NeighborhoodQueue(p),seen=new Set();queue.offer(anchor);
+  const checked=[];
+  while(queue.hasWork){for(const row of queue.take(2,seen)){assert.ok(!seen.has(row.key));seen.add(row.key);checked.push(row);}}
+  queue.offer(anchor);assert.equal(queue.hasWork,false);
+  assert.equal(new Set(checked.map(row=>row.key)).size,checked.length);
+  assert.ok(checked.some(row=>row.key===tupleKey(p,pair.tuple)));
+  assert.deepEqual(neighborhood(p,anchor).map(row=>row.key),rows.map(row=>row.key),'candidate ordering is deterministic');
+});
+
+test('repair exclusions remove guild support and crafted candidates before indexing', async () => {
+  const {nativeContext}=await import('../backend/native.mjs');
+  const c=context();
+  const request=structuredClone(c.eval(`(() => {
+    const items=emptyEquipment().concat([weapon()]);items[0]=fixture('helmet','need',{strReq:104});
+    const pools=items.map(item=>[{key:item.statMap.get('name'),map:item.statMap}]);
+    const craft=fixture('helmet','craft',{str:100});craft.statMap.set('crafted',true);
+    pools[0].unshift({key:'crafted',map:craft.statMap});
+    const guild=fixture('guildTome','guild',{str:4});guild.statMap.set('category','tome');
+    return {pools,tomes:[guild.statMap],sets:[],config:{level:106,objective:'health',direction:'max',rules:[],excludeCrafted:true,excludeGuildTome:true}};
+  })()`));
+  const ctx=nativeContext(request);
+  assert.equal(vm.runInContext('prepared.pools[0].length',ctx),1);
+  assert.equal(vm.runInContext('prepared.pools[0][0].key',ctx),'need');
+  assert.equal(vm.runInContext('prepared.tomes.length',ctx),0);
+  assert.equal(vm.runInContext('payload.sizes[0]',ctx),1);
+  assert.equal(vm.runInContext('payload.base[0]',ctx),0);
+});
+
+test('excluded crafted starting pieces map toward eligible items with a similar stat role', () => {
+  const c=context();
+  const distances=c.eval(`(() => {
+    const crafted=fixture('helmet','source',{hprRaw:400,hprPct:75,mr:5,str:20});crafted.statMap.set('crafted',true);
+    const close=fixture('helmet','close',{hprRaw:390,hprPct:70,mr:5,str:18});
+    const unrelated=fixture('helmet','unrelated',{sdRaw:250,sdPct:80});
+    const source=OptimizerModel.seedFeatures(crafted.statMap);
+    return [OptimizerModel.seedDistance(close.statMap,source),OptimizerModel.seedDistance(unrelated.statMap,source)];
+  })()`);
+  assert.ok(distances[0]<distances[1]);
 });

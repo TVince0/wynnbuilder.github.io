@@ -153,6 +153,25 @@ const OptimizerModel = (() => {
               weaponClass?.toLowerCase())),
     );
   }
+  function seedFeatures(map) {
+    const keys=[...new Set([...componentKeys,...skp_order,...skp_order.map(key=>key+'Req')])];
+    const features=Object.fromEntries(keys.map(key=>[key,map.get('maxRolls')?.get(key)??map.get(key)??0]).filter(([,value])=>Number.isFinite(value)));
+    if(map.get('category')==='weapon'){
+      const speed=baseDamageMultiplier[attackSpeeds.indexOf(map.get('atkSpd'))]||1;
+      features._weaponDps=damage_keys.reduce((sum,key)=>{
+        const range=map.get(key),pair=Array.isArray(range?.[1])?range[1]:range;
+        return sum+(Array.isArray(pair)?(pair[0]+pair[1])*.5*speed:0);
+      },0);
+    }
+    return features;
+  }
+  function seedDistance(map, source) {
+    const features=seedFeatures(map);
+    const scales={_weaponDps:500,hp:1000,hpBonus:1000,hprRaw:500,hprPct:100,mr:10,ms:10,maxMana:30,sdRaw:100,sdPct:100,mdRaw:100,mdPct:100,damRaw:100,damPct:100,rSdRaw:100};
+    for(const key of skp_order){scales[key]=30;scales[key+'Req']=100;}
+    for(const key of skp_elements)scales[key+'DamPct']=100;
+    return Object.entries(scales).reduce((sum,[key,scale])=>sum+Math.abs((features[key]||0)-(source[key]||0))/scale,0);
+  }
   function measurements(build, finalStats) {
     const stats = new Map(finalStats || build.statMap);
     if (!finalStats) for (let i = 0; i < 5; i++)
@@ -187,6 +206,7 @@ const OptimizerModel = (() => {
     baseMetrics,
     componentKeys,
     componentMetrics,
+    seedFeatures, seedDistance,
     label,
     roll,
     prepare,

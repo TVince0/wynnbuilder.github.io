@@ -426,10 +426,14 @@ assert.equal(doc.getElementById('optimizer-closest-details').hidden,false);
 assert.equal(doc.getElementById('optimizer-closest-pieces').children.length,9);
 assert.ok(doc.getElementById('optimizer-closest-pieces').textContent.includes('Third Eye'));
 assert.ok(doc.getElementById('optimizer-closest-values').textContent.includes('Miss'));
-assert.ok(doc.getElementById('optimizer-closest-status').textContent.includes('does not meet'));
+assert.ok(doc.getElementById('optimizer-closest-status').textContent.includes('some stat targets are not met'));
 assert.equal(doc.getElementById('optimizer-closest-details').querySelector('button'),null);
 assert.equal(doc.querySelectorAll('.optimizer-result').length,0);
 assert.ok(doc.getElementById('optimizer-timings').textContent.includes('Recent (~2s)'));
+vm.runInContext('testCudaClient.onmessage({data:{progress:{...diagnosticProgress,closest:{...diagnosticProgress.closest,functioning:false}}}})',win);
+assert.equal(doc.getElementById('optimizer-closest-details').hidden,true,'UI rejects skill-invalid closest frames');
+assert.ok(doc.getElementById('optimizer-closest').textContent.includes('No skill-valid'));
+vm.runInContext('testCudaClient.onmessage({data:{progress:diagnosticProgress}})',win);
 const diagnosticNode=doc.getElementById('optimizer-closest-values').firstElementChild;
 vm.runInContext('testCudaClient.onmessage({data:{progress:{...diagnosticProgress,elapsed:2}}})',win);
 assert.equal(doc.getElementById('optimizer-closest-values').firstElementChild,diagnosticNode,'unchanged diagnostics must keep their DOM');
@@ -439,6 +443,42 @@ diagnosticRule.querySelector('button').click();
 doc.getElementById('optimizer-strategy').value='exhaustive';
 doc.getElementById('optimizer-strategy').dispatchEvent(new win.Event('change',{bubbles:true}));
 vm.runInContext('OptimizerCudaClient=savedCudaClient',win);
+
+// Shared-link repair reuses the native decoder, keeps owned locks and clears guild support.
+const requestBeforeRepair=lastRequest;
+const sourceRepair=createWindow(win.location.href);
+sourceRepair.localStorage.setItem('wynnbuilder.optimizer.v1',win.localStorage.getItem('wynnbuilder.optimizer.v1'));
+await openBuilder(sourceRepair);
+await wait(()=>sourceRepair.document.getElementById('optimizer-run'),'repair source mount');
+const sourceDoc=sourceRepair.document;
+sourceDoc.getElementById('optimizer-seed-current').click();
+assert.ok(sourceDoc.getElementById('optimizer-seed-count').textContent.includes('1 saved'));
+for(const id of ['optimizer-no-crafted','optimizer-no-guild','optimizer-positive-regen'])sourceDoc.getElementById(id).checked=true;
+sourceRepair.shareRepairLink='https://wynnbuilder.github.io/builder/'+sourceRepair.location.search+sourceRepair.location.hash;
+const repairURL=vm.runInContext('BuildOptimizer.repairLink(shareRepairLink,false)',sourceRepair);
+assert.equal(new URL(repairURL).origin,new URL(address).origin);
+assert.ok(new URL(repairURL).searchParams.has('optimizerRepair'));
+assert.throws(()=>vm.runInContext("BuildOptimizer.repairLink('javascript:alert(1)#abc',false)",sourceRepair));
+const repaired=createWindow(repairURL);
+for(const key of ['wynnbuilder.optimizer.v1','wynnbuilder.optimizer.pendingRepair.v1'])
+  repaired.localStorage.setItem(key,sourceRepair.localStorage.getItem(key));
+await openBuilder(repaired);
+await wait(()=>repaired.document.getElementById('optimizer-run'),'repair destination mount');
+assert.equal(repaired.localStorage.getItem('wynnbuilder.optimizer.pendingRepair.v1'),null);
+assert.ok(!repaired.location.search.includes('optimizerRepair'));
+assert.equal(repaired.document.getElementById('optimizer-repair-seeds').checked,true);
+assert.equal(vm.runInContext("equip_inputs[0].get_value().statMap.get('maxRolls').get('mr')",repaired),0,'locked actual rolls survive link repair');
+repaired.document.getElementById('optimizer-strategy').value='exhaustive';
+repaired.document.getElementById('optimizer-strategy').dispatchEvent(new repaired.Event('change',{bubbles:true}));
+repaired.document.getElementById('optimizer-run').click();
+await wait(()=>repaired.document.querySelector('.optimizer-result'),'repair source search');
+assert.equal(repaired.document.getElementById('guildTome1-choice').value,'');
+assert.equal(lastRequest.config.excludeGuildTome,true);
+assert.equal(lastRequest.config.excludeCrafted,true);
+assert.ok(lastRequest.config.seedBuilds.length);
+assert.ok(lastRequest.config.rules.some(rule=>rule.stat==='regen'&&rule.min>=0));
+assert.ok(lastRequest.tomes.every(map=>map.get('type')!=='guildTome'||map.has('NONE')));
+await sourceRepair.happyDOM.close();await repaired.happyDOM.close();lastRequest=requestBeforeRepair;
 
 // Reopen the actual native share URL in a fresh document and compute graph.
 const reloaded = createWindow(win.location.href);
@@ -579,6 +619,45 @@ try {
   }
   assert.ok(closest.shortfalls.some(gap=>gap.stat==='health'&&gap.above>0));
   missController.abort();await sleep(250);
+  // Skill-invalid states may guide repairs, but must never be the displayed closest attempt.
+  const illegalRequest=structuredClone(request);
+  illegalRequest.config.rules=[];
+  illegalRequest.pools[0][0].map.set('reqs',[999,999,999,999,999]);
+  const illegalController=new AbortController();
+  const illegal=await fetch(origin+'/api/cuda/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(illegalRequest,encode),signal:illegalController.signal});
+  const illegalReader=illegal.body.getReader(),illegalDecoder=new TextDecoder();let illegalBuffer='',illegalProgress;
+  while(!illegalProgress||illegalProgress.elapsed<.8){
+    const {value,done}=await illegalReader.read();assert.ok(!done);
+    illegalBuffer+=illegalDecoder.decode(value,{stream:true});let newline;
+    while((newline=illegalBuffer.indexOf('\n'))>=0){
+      const event=JSON.parse(illegalBuffer.slice(0,newline));illegalBuffer=illegalBuffer.slice(newline+1);assert.ok(!event.error,event.error);
+      if(event.progress?.phase==='searching')illegalProgress=event.progress;
+    }
+  }
+  assert.ok(illegalProgress.evaluated>=1);
+  assert.equal(illegalProgress.closest,null);
+  assert.equal(illegalProgress.nativeSkillValid,0);
+  assert.deepEqual(illegalProgress.builds,[]);
+  illegalController.abort();await sleep(250);
+  // The native seed is evaluated even if the GPU only repeats an unsuitable tuple.
+  const seededRequest=structuredClone(request);
+  seededRequest.pools[0]=[request.pools[0][0],{...request.pools[0][0],key:'seed-neighbor'}];
+  seededRequest.config.repairSeeds=true;
+  seededRequest.config.seedBuilds=[seededRequest.pools.map(pool=>pool[0].key)];
+  const seededController=new AbortController();
+  const seeded=await fetch(origin+'/api/cuda/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(seededRequest,encode),signal:seededController.signal});
+  const seededReader=seeded.body.getReader(),seededDecoder=new TextDecoder();let seededBuffer='',seededProgress;
+  while(!seededProgress||seededProgress.repair?.evaluated<2||!seededProgress.builds.length){
+    const {value,done}=await seededReader.read();assert.ok(!done);
+    seededBuffer+=seededDecoder.decode(value,{stream:true});let newline;
+    while((newline=seededBuffer.indexOf('\n'))>=0){
+      const event=JSON.parse(seededBuffer.slice(0,newline));seededBuffer=seededBuffer.slice(newline+1);assert.ok(!event.error,event.error);
+      if(event.progress?.phase==='searching')seededProgress=event.progress;
+    }
+  }
+  assert.ok(seededProgress.closest.functioning);
+  assert.ok(seededProgress.repair.expanded>=1);
+  seededController.abort();await sleep(250);
   // Rapid singleton native batches used to bypass the progress throttle.
   const stressRequest=structuredClone(request);
   stressRequest.pools[0]=Array.from({length:200},(_,i)=>({...request.pools[0][0],key:'stress-'+i}));
